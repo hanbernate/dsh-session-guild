@@ -2,11 +2,11 @@
 
 English | [中文](README.zh-CN.md)
 
-Publish a quest from a DeepSeek Harness session to a fresh ordinary session —
-in another workspace, or beside the current one when this session is already
-long — keep it on a quest list, and receive the summary as a background-job
-result when the work is done. No user message is inserted into the client
-session.
+Publish a quest from a DeepSeek Harness session to a fresh ordinary session:
+it works out the detailed plan itself, does the work in its own context, and
+reports a summary back as a background-job result when it is done — so the
+delegating session keeps only the goal and the result. No user message is
+inserted into the client session.
 
 ## Standard subagent vs. a contractor sub-session
 

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "description": "Publish a quest to a fresh session in another workspace; the contractor sub-session refines the plan and does the work there, and reports back to the original session when it is done.",
+    "description": "Publish a quest to a fresh ordinary session: it works out the detailed plan itself, does the work in its own context, and reports a summary back to the session that delegated it.",
     "detail": "README.md"
   }
 }

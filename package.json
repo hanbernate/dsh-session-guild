@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-guild",
   "version": "0.0.1",
-  "description": "Quest publishing for DeepSeek Harness: hand a quest to a fresh ordinary session in another workspace or beside the current one, track it in a rebuildable cache, and let the contractor report a summary back as a background job result.",
+  "description": "Quest publishing for DeepSeek Harness: hand a quest to a fresh ordinary session that works out the detailed design itself and reports a summary back, with every quest tracked until it completes.",
   "type": "module",
   "license": "MIT",
   "exports": {

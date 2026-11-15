@@ -8,7 +8,7 @@
 | 适配器 | DSH 范围 | 关键能力 | 行为 |
 |---|---|---|---|
 | `latest` | 0.2.2-rc.1+ | `sessionController.state`、`tools.when`、`workspace/session-archived`、`unarchiveSession` | 完整：按需可见、受托会话运行态、归档恢复、双归档事件级联 |
-| `v2` | 0.1.7-rc.1 – 0.2.1 | 无 `state`、无 `tools.when`；0.2.1 起有 `workingDirectory.get`；有 `unarchiveSession`；只有 `workspace/session-stop` | 六个工具常驻，`running` 恒为 false，完整生命周期，从 stop 级联 |
+| `v2` | 0.1.7-rc.1 – 0.2.1 | 无 `state`、无 `tools.when`；0.2.1 起有 `workingDirectory.get`；有 `unarchiveSession`；只有 `workspace/session-stop` | 七个 Session 相关工具常驻，`running` 恒为 false，完整生命周期，从 stop 级联 |
 | `v1` | 0.1.2-rc.1 – 0.1.5 | 无 `permissionPresets.catalog`、无 `workingDirectory.get`、无 `unarchiveSession`、无归档事件 | 权限目录由 `names`/`optionOf` 合成；cwd 用会话头；继续操作原地唤醒；不级联 |
 | `v0` | < 0.1.2 | 没有 `sessionController` | 只注册 `guild_list_workspaces` 并告警；不假装能委托 |
 
@@ -22,7 +22,7 @@
   `workspaceRegistry.unarchiveSession`，以及 `tools.resolve/executable`
   （`ToolRegistrationOptions.when` 的运行时信号）。
 - `guild_list_workspaces` 在所有宿主上都于 apply 时注册。
-- `permissionPresets` 是插件级 `inject` 的硬依赖；另外五个工具再等待
+- `permissionPresets` 是插件级 `inject` 的硬依赖；另外六个工具再等待
   `ctx.inject(['sessionController', 'workspaceRegistry'])` 后注册。此时才读取
   能力，避免服务晚挂载时把插件钉死在只读回退上。
 - 按需可见是 `tools` 服务自身的能力，所以在 apply 时单独探测，而不是跟
@@ -49,7 +49,7 @@
 
 - **0.2.1 及更早：** 没有实时状态，`guild_list_quests` / `guild_append` 里的
   `running` 恒为 `false`。
-- **0.2.1 及更早：** 六个工具在每个会话都出现；每个 `execute()` 内的归属检查仍会拒绝误用。
+- **0.2.1 及更早：** 七个 Session 相关工具在每个会话都出现；每个 `execute()` 内的归属检查仍会拒绝误用。
 - **0.1.2 – 0.1.5：** 权限目录由 `names` / `optionOf` / `resolve` 合成；
   连 `names` 都没有时，用三个内置 preset 通过 `resolve` 探测。
 - **0.1.2 – 0.1.5：** cwd 来自持久的会话头。

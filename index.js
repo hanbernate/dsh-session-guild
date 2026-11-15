@@ -1,5 +1,5 @@
 /**
- * Workspace guild: publish a quest for a task in one DSH workspace to a fresh
+ * Workspace guild: publish a quest in one DSH workspace to a fresh
  * ordinary Session that belongs to another workspace, keep it in a rebuildable
  * in-memory cache, and let the contractor report back so the client can continue.
  *
@@ -13,8 +13,9 @@
  * State model (see docs/architecture.md):
  * - The plugin never persists quest state. The Session's derived messages are
  *   the source of truth: the `guild_publish_quest` result carries a structured
- *   `guild.quest` block, `guild_report` carries a `guild.report` block, and a
- *   delivered report is a `report:<questId>` user message.
+ *   `guild.quest` block (with `jobId` / `delivery`), `guild_report` carries a
+ *   `guild.report` block with the summary, and only a legacy `prompt`-delivered
+ *   report is also a `report:<questId>` user message.
  * - `lib/cache.js` keeps the records in memory and rebuilds them on demand
  *   after a restart from `Session.deriveMessages()` — no log scan.
  * - Quest status is independent of the contractor Session's state: `in_progress`
@@ -27,13 +28,13 @@
  * through soft lookups so a deployment that composes only some of them still
  * loads: `workspaceRegistry`, `sessionController`,
  * `permissionPresets`, `sessionTitle`, `approval`, `workingDirectory`,
- * `sandboxPolicy`, `sessions`, `agents`.
+ * `sandboxPolicy`, `sessions`, `agents`, `jobs`.
  *
  * Every rc-generation difference (permission catalog shape, working directory,
  * live state, archive restore, archive events, per-step tool visibility) lives
  * in `./lib/compat.js`; the runtime and tools only call the selected adapter.
  *
- * @module dsh-workspace-guild
+ * @module dsh-session-guild
  */
 
 import { detectCapabilities, selectAdapter } from './lib/compat.js'
@@ -42,11 +43,12 @@ import { createPermissions } from './lib/permissions.js'
 import { createRegistration, mountQuestTools } from './lib/register.js'
 import { createSessions } from './lib/sessions.js'
 import { createQuestCache } from './lib/cache.js'
+import { createQuestJobs } from './lib/quest-jobs.js'
 import { createListWorkspacesTool } from './lib/tools/list-workspaces.js'
 import { createWorkspaces } from './lib/workspaces.js'
 import { commitSignal } from './lib/signals.js'
 
-export const name = 'workspace-guild'
+export const name = 'session-guild'
 
 /**
  * `tools` and the DSH permission-presets service are required. The Session
@@ -96,6 +98,7 @@ function createHost(ctx) {
     sandboxPolicy: () => ctx.get('sandboxPolicy'),
     sessions: () => ctx.get('sessions'),
     agents: () => ctx.get('agents'),
+    jobs: () => ctx.get('jobs'),
   }
 }
 
@@ -110,6 +113,7 @@ function createRuntime(ctx, settings) {
   const sessions = createSessions({ host })
   const permissions = createPermissions({ ctx, settings, host })
   const cache = createQuestCache()
+  const questJobs = createQuestJobs({ ctx, host, settings, cache })
   /** Observation only; it never changes quest state. */
   const observeContractor = async sessionId => {
     const archived = workspaces.archivedIds().includes(sessionId)
@@ -118,7 +122,7 @@ function createRuntime(ctx, settings) {
     return { archived, running: state?.running === true, active: state?.active === true, live: live !== undefined }
   }
 
-  return { ctx, settings, host, workspaces, sessions, permissions, cache, observeContractor }
+  return { ctx, settings, host, workspaces, sessions, permissions, cache, questJobs, observeContractor }
 }
 
 /**

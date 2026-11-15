@@ -1,16 +1,16 @@
-# dsh-workspace-guild
+# dsh-session-guild
 
 [English](README.md) | 中文
 
-把任务委托给另一个工作区的全新会话执行，保留一条可追踪的委托记录，并在完成后
-拿回摘要。
+把任务委托给一个全新会话执行——在另一个工作区，或者在当前会话已经很长时并列开
+一个子会话——保留一条可追踪的委托记录，并在完成后拿回摘要。
 
 ## 与标准 subagent 的对比
 
 标准 subagent 模式要求主会话先完成设计和计划；subagent 通常只负责执行，人很少
 介入，主会话必须一直维持这些上下文。公会把分工反过来：
 
-| | 标准 subagent | 公会受托会话 |
+| | 标准 subagent | 受托子会话 |
 |---|---|---|
 | 主会话 | 完成设计与计划 | 只定目标和需求 |
 | 设计在哪里完善 | 主会话 | 受托会话 |
@@ -22,6 +22,8 @@
 
 - 要求 **DSH ≥ 0.1.5-rc.1**
 - 无额外 npm 依赖；需要 DSH 的 `permission-presets` 插件（`ctx.permissionPresets`）
+- 回报默认经 DSH 的后台任务插件（`@deepseek-ai/dsh-jobs` + `@deepseek-ai/dsh-tool-jobs`）送达；
+  缺少它们时自动退回消息投递
 - 不需要学习新命令或新界面，助手会在你需要时使用插件
 - 默认情况下，所有已注册工作区都可以作为委托目标
 
@@ -41,7 +43,7 @@
   │                                       你在受托会话里放权
   │                                       受托会话开始执行
   │
-  ◀──────── 摘要作为一条消息回到委托人 ─── 完成后主动回报
+  ◀──────── 摘要结算一个后台任务 ───────── 完成后主动回报
   │
   委托标记为 completed
   你在原会话里继续
@@ -54,7 +56,8 @@
    随时改它的权限。
 3. 受托会话默认以**只读**权限启动；怎么计划和执行是它的事，需要写权限时它会提出，
    你在那个会话里放权即可。
-4. 完成后，受托会话把摘要发回你的会话，委托完成；你继续在原会话里工作。
+4. 完成后，回报结算你会话上的一个后台任务：`job_output` 拿到摘要，或稍后用
+   `guild_collect` 补读；不会插入一条用户消息，你继续在原会话里工作。
 
 可以同时有多个委托在跑。工作区之间文件与状态互相独立，受托会话也彼此独立。
 
@@ -71,10 +74,10 @@ DSH 重启后不会自动续跑。需要继续时，让助手恢复未完成的�
 配置写在 profile 的插件行 patch 里：
 
 ```yaml
-- id: workspace-guild
+- id: session-guild
   config:
     defaultPermissionPreset: read-only   # 默认；null 表示继承调用方权限
-    maxTaskChars: 20000
+    maxQuestChars: 20000
     summaryChars: 4000
     requireApproval: false               # true 才弹确认卡
     approveAppend: false                   # true 时每条追加指令都确认
@@ -83,7 +86,7 @@ DSH 重启后不会自动续跑。需要继续时，让助手恢复未完成的�
 | 键 | 默认 | 作用 |
 |---|---|---|
 | `defaultPermissionPreset` | `read-only` | 受托会话初始权限；`null` 表示继承调用方当前权限 |
-| `maxTaskChars` | `20000` | 需求文本上限 |
+| `maxQuestChars` | `20000` | 委托文本上限 |
 | `summaryChars` | `4000` | 回传摘要上限 |
 | `requireApproval` | `false` | 新建受托会话前是否弹确认卡 |
 | `approveAppend` | `false` | 每条追加指令是否也要确认 |
@@ -94,8 +97,12 @@ W
 
 在生产环境依赖它之前，请先读这些限制。
 
-- **回报看起来像你的消息。** DSH 的用户消息类型只有一种，受托会话的摘要会以
-  用户消息的形式出现在委托人会话里。
+- **回报是后台任务的结果，不是消息。** 发起委托时会以你的会话为 owner 登记一个
+  `guild-quest` 后台任务并立即返回，所以受托会话干活期间你的会话保持空闲。
+  受托会话回报后任务结算：`job_output` 拿到摘要，`guild_collect` 可事后补读，
+  不会产生用户消息。这个任务需要会话存活、占用该会话的后台任务名额（默认 10 个），
+  结算前该会话不可归档。宿主没有 `jobs` 服务时退回旧的消息投递（可配
+  `reportDelivery`）。
 - **只有受托会话回报，委托才会完成。** 受托会话做完但没回报，委托仍是
   in_progress；空闲或归档都不会改变它。
 - **不会自动续跑。** 重启后不会扫描、唤醒或重放；需要你明确要求继续。
@@ -109,15 +116,16 @@ W
   `permission-presets` 插件时公会不会挂载。`sessionController` 和
   `workspaceRegistry` 也是委托工具必需的；headless 或最小化部署缺少它们时可能
   只剩工作区发现。
-- **委托方和受托方不能是同一个工作区。** 委托自己的请求会被拒绝，请直接在当前会话
-  里做。
+- **当前工作区也可以是委托目标。** 开出来的是与本会话并列的子会话，用来把长任务从
+  主会话上下文里移出去；它共用同一份 checkout，插件不做文件级冲突检测，别让两边同时
+  改同一批文件。
 - **旧版 DSH 会降级。** 0.2.1 及更早没有实时 `running` 状态，委托列表里看不出
   受托会话是否正在执行；0.2.1 及更早助手在所有会话里都能看到委托操作，即使当前
   会话用不上（有一点上下文成本）；0.1.5 上归档的受托会话可以被唤醒但不能取消归档，
   归档委托人会话也不会级联。
 - **0.1.2-rc.1 本身无法完成委托。** 该版本创建会话时会挂载 `standard` preset
   失败，这是宿主 bug，不是插件问题；请使用 0.1.5-rc.1 或更新版本。
-- **有长度上限。** 需求受 `maxTaskChars` 限制；摘要受 `summaryChars` 限制，超出
+- **有长度上限。** 委托受 `maxQuestChars` 限制；摘要受 `summaryChars` 限制，超出
   会被截断。
 
 逐版本细节见 [docs/limitations.md](docs/limitations.md)。
@@ -140,7 +148,7 @@ W
 把 `0.0.x` 目录 link 进 profile，或用 Plugin Manager 添加本地插件目录：
 
 ```bash
-dsh plugin --profile <name> add /path/to/dsh-workspace-guild/0.0.x
+dsh plugin --profile <name> add /path/to/dsh-session-guild/0.0.x
 ```
 
 在 profile 里启用即可；工作区注册表和会话服务由 Harness 提供，不需要额外配置。

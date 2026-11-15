@@ -1,18 +1,20 @@
-# dsh-workspace-guild
+# dsh-session-guild
 
 English | [中文](README.zh-CN.md)
 
-Publish a quest for a task from one DeepSeek Harness workspace to a fresh
-session in another workspace, keep it on a quest list, and receive a
-summary back when the work is done.
+Publish a quest from a DeepSeek Harness session to a fresh ordinary session —
+in another workspace, or beside the current one when this session is already
+long — keep it on a quest list, and receive the summary as a background-job
+result when the work is done. No user message is inserted into the client
+session.
 
-## Standard subagent vs. a Guild contractor
+## Standard subagent vs. a contractor sub-session
 
 A standard subagent needs the main session to finish the design and plan first;
 the subagent mostly executes, humans rarely intervene, and the main session has
 to carry all of that context. The Guild inverts that split:
 
-| | Standard subagent | Guild contractor |
+| | Standard subagent | Contractor sub-session |
 |---|---|---|
 | Main session | completes the design and plan | fixes only the goal and requirements |
 | Where the design is refined | main session | contractor session |
@@ -25,6 +27,8 @@ decides how to proceed, and the result is reported back to the client session.
 
 - Requires **DSH ≥ 0.1.5-rc.1**
 - No npm dependencies; requires the DSH `permission-presets` plugin (`ctx.permissionPresets`)
+- Reports travel through the DSH background-job plugins (`@deepseek-ai/dsh-jobs` + `@deepseek-ai/dsh-tool-jobs`);
+  without them the plugin falls back to message delivery
 - No new commands or UI to learn; the assistant uses the plugin on your behalf
 - Every registered workspace can host a quest by default
 
@@ -37,7 +41,7 @@ Two sides of one relationship: the **client** session posts the quest; the
 ```
 Your session (client)                     Target workspace (contractor)
 ─────────────────────                     ────────────────────────────
-You describe the task
+You describe the quest
   │
   ├─ a normal session is opened there ──▶ appears in that workspace's sidebar
   │  (read-only by default)                owns its own execution plan
@@ -45,13 +49,13 @@ You describe the task
   │                                        you switch on write access there
   │                                        the contractor does the work
   │
-  ◀──────── summary returns as a message ── contractor reports when done
+  ◀──────── summary settles a job ───────── contractor reports when done
   │
   the quest is marked completed
   you continue with the result
 ```
 
-1. Ask your assistant to publish the task as a quest in another workspace. Name the
+1. Ask your assistant to publish the quest in another workspace. Name the
    repo, plugin, service, or path; if the target is ambiguous, it lists the
    registered workspaces first.
 2. A fresh **ordinary session** is created in that workspace and titled
@@ -60,7 +64,9 @@ You describe the task
 3. The contractor starts **read-only by default**. How it plans and executes is
    its concern; when it needs write access, it asks, and you grant it in that
    session.
-4. When the work is done, the contractor sends a summary back to your session.
+4. When the work is done, the report settles a background job on your session:
+   `job_output` returns the summary, or `guild_collect` reads it later. No user
+   message is inserted, and you keep working in the original session.
    The quest is complete; you keep working in your original session.
 
 Several quests can be in flight at once. Each workspace has its own files
@@ -81,7 +87,7 @@ restored from the archive rather than recreated.
 Config lives in the profile patch for the plugin row:
 
 ```yaml
-- id: workspace-guild
+- id: session-guild
   config:
     defaultPermissionPreset: read-only   # default; null inherits the caller permission
     maxTaskChars: 20000
@@ -105,8 +111,14 @@ contractor session's permission is yours to change.
 
 Read these before relying on the plugin in production.
 
-- **Reports look like your messages.** DSH has only one user-message kind, so
-  a contractor report appears in the client session as a user message.
+- **A report is a background job result, not a message.** Publishing registers
+  a `guild-quest` job owned by your session and returns immediately, so your
+  session stays idle while the contractor works. When the contractor reports,
+  the job settles: `job_output` returns the summary, `guild_collect` can read
+  it later, and no user message is admitted. The job must belong to a live
+  session, counts against that session's background-job limit, and keeps the
+  session from being archived until it settles. Hosts without the `jobs`
+  service fall back to the old message delivery (configure `reportDelivery`).
 - **A quest completes only when the contractor reports.** If the
   contractor finishes but does not report, the quest stays in progress;
   neither idleness nor archiving changes it.
@@ -127,8 +139,11 @@ Read these before relying on the plugin in production.
   not mount. `sessionController` and `workspaceRegistry` are also required for
   quest tools; a headless or minimal deployment lacking them may only provide
   workspace discovery.
-- **The client and contractor workspaces cannot be the same.** Questing
-  the current workspace is refused; work in the current session instead.
+- **The current workspace is a valid target.** A quest published there opens a
+  sub-session beside this one, which is how a long task leaves the main
+  session's context. That sub-session shares the same checkout and the plugin
+  does not detect concurrent edits to the same files; keep the two off each
+  other's work.
 - **Older DSH versions degrade.** On 0.2.1 and earlier there is no live
   `running` state, so the quest list cannot show that a contractor is
   executing. On 0.2.1 and earlier the assistant always sees the quest
@@ -162,7 +177,7 @@ the measured [COMPATIBILITY.md](COMPATIBILITY.md) matrix.
 Link the `0.0.x` directory into a profile, or add it with Plugin Manager:
 
 ```bash
-dsh plugin --profile <name> add /path/to/dsh-workspace-guild/0.0.x
+dsh plugin --profile <name> add /path/to/dsh-session-guild/0.0.x
 ```
 
 Enable it for the profile. The workspace registry and session services are
@@ -189,7 +204,7 @@ All files under `docs/` are written in Chinese; this English README is the
 default package entry.
 
 - [docs/tools.md](docs/tools.md) — tool reference and visibility rules
-- [docs/lifecycle.md](docs/lifecycle.md) — task/session lifecycle, archive, resume
+- [docs/lifecycle.md](docs/lifecycle.md) — quest/session lifecycle, archive, resume
 - [docs/architecture.md](docs/architecture.md) — purpose of every code file and the state model
 - [docs/compatibility.md](docs/compatibility.md) — adapter matrix and degraded behavior
 - [docs/limitations.md](docs/limitations.md) — detailed limitations

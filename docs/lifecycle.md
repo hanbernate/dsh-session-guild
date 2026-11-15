@@ -8,7 +8,8 @@
 | 状态 | 何时写入 | 含义 |
 |---|---|---|
 | `in_progress` | 投递前保存记录，以及投递成功后 | 受托会话还没有回报 |
-| `completed` | 受托会话调用 `guild_report` | 摘要已送达，委托完成 |
+| `completed` | 受托会话调用 `guild_report` | 摘要已记录：job 投递由委托方 `job_output` 读取，旧式 prompt 投递则是消息已送达 |
+| `cancelled` | 委托方的 `guild-quest` 任务被终止（`job_kill`、owner 释放） | 委托方不再等待；受托会话当前 turn 会被尽力取消 |
 | `failed` | 需求投递失败 | 会话可能存在，但委托从未开始 |
 
 受托会话执行中报错不会产生 `failed`。只有受托会话主动回报，委托人会话才知道；否则
@@ -27,28 +28,39 @@
 
 ## 委托流程
 
-1. 解析受托工作区，拒绝当前工作区。
+1. 解析受托工作区。当前工作区也是合法目标：委托会在同一个工作区里开一个并列子会话。
 2. 解析初始权限（显式参数、配置默认值，或继承调用方权限）。
 3. 可选地请求审批（`requireApproval: true`）。
 4. 在受托工作区创建普通会话。
-5. 等待会话 live，写入权限，重命名会话，保存委托记录。
-6. 用全新的、永不中止的信号投递需求。
-7. 写入 `deliveredAt`；失败则置为 `failed` 并返回 session id。
+5. 等待会话 live，写入权限，重命名会话。
+6. 登记回报载体：默认在委托方会话名下开一个 `guild-quest` 后台任务（宿主没有
+   `jobs` 服务时退化为消息投递），把 `jobId` / `delivery` 写进委托记录和
+   `guild.quest` 块。
+7. 用全新的、永不中止的信号投递需求。
+8. 写入 `deliveredAt`；失败则结算任务为 failed、置为 `failed` 并返回 session id。
 
 先保存后投递是刻意的：在第 4 步和第 6 步之间崩溃时，会留下一条可见记录和一个
 可识别的会话，而不是一个被静默遗弃的会话。
 
 ## 回报
 
-受托会话调用 `guild_report(summary)`：
+受托会话调用 `guild_report(summary)`。默认（`delivery: "job"`）：
 
-1. 摘要作为 queue 模式的用户消息投递到委托人会话。
-2. 记录置为 `completed`，写入 `reportedAt`。
+1. 用摘要结算委托方会话的 `guild-quest` 任务：`JobOutcome.result = summary`。
+2. 记录置为 `completed`，写入 `reportedAt` 与 `summary`。
 
-投递发生在委托状态写入之前，所以之后即使存储失败，摘要也不会丢。报告以
-`report:<questId>` 作为请求身份投递到 client 会话，并带上 `guild.report` 块；cache
-重建时用这两者判定 `completed`，因此状态写入失败也不会把已回报的委托当成未完成。
-同一条委托重复回报会被拒绝。
+委托方会话**不会**收到 `user/message`，也不会因为等待而进入 running：任务注册后
+publish 立即返回，turn 正常结束；结果就绪时 Host 投递一条 notice（`form: "notice"`）
+唤醒会话，模型用 `job_output` 读到工具结果。若模型当时正 `job_output(wait)`，
+Host 会跳过 notice，结果由那次工具调用返回。
+
+接收任务不存在时（重启、owner 释放、被终止），第一步退化为"只记录"：状态与摘要
+写进 cache 和受托会话工具结果里的 `guild.report` 块，不推送任何消息；委托方之后用
+`guild_collect` 读取（live 会话走派生消息，冷会话走历史页）。
+
+`reportDelivery: "prompt"` 保留旧行为：摘要作为 queue 模式的用户消息投递到委托人
+会话，请求身份是 `report:<questId>`，cache 重建时用它和 `guild.report` 块判定
+`completed`。摘要按 `summaryChars` 截断。同一条委托重复回报会被拒绝。
 
 ## 追加指令
 
@@ -94,9 +106,10 @@
 ## 状态与缓存
 
 - 插件不写任何持久化存储；Session log 是唯一事实来源。
-- client 会话保存 `guild_publish_quest` 结果里的 `guild.quest` 块，以及
-  `report:<questId>` + `guild.report` 块的 report 用户消息；contractor 会话保存
-  投递消息里的 `guild.quest` 块和 `guild_report` 结果里的 `guild.report` 块。
+- client 会话保存 `guild_publish_quest` 结果里的 `guild.quest` 块（含 `jobId` /
+  `delivery`），以及旧式 prompt 投递产生的 `report:<questId>` + `guild.report`
+  用户消息；contractor 会话保存投递消息里的 `guild.quest` 块和 `guild_report`
+  结果里的 `guild.report` 块（含 `summary`，这是重启后补读的来源）。
 - 进程内只保留一个可重建的 cache；DSH 重启后 cache 为空，第一次访问某个 Session
   时从它的 `deriveMessages()`（模型可见 surface）重建，不扫事件日志。
 - 被 compaction 遮蔽的旧委托不会重建；模型同样看不到它们。

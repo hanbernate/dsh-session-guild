@@ -150,11 +150,12 @@ function fixture(generation, overrides = {}, options = {}) {
 
 test('modern host uses per-step `when` and restores an archived contractor', async () => {
   const f = fixture('modern')
-  const entry = f.registrations.filter(item => ['guild_list_quests', 'guild_append', 'guild_resume', 'guild_report'].includes(item.name))
-  assert.equal(entry.length, 4)
+  const entry = f.registrations.filter(item =>
+    ['guild_list_quests', 'guild_collect', 'guild_append', 'guild_resume', 'guild_report'].includes(item.name))
+  assert.equal(entry.length, 5)
   for (const item of entry) assert.equal(typeof item.options?.when, 'function', `${item.name} must be gated by when`)
 
-  const published = await f.tools.get('guild_publish_quest').execute({ workspace: 'beta', task: 'x' }, f.exec())
+  const published = await f.tools.get('guild_publish_quest').execute({ workspace: 'beta', quest: 'x' }, f.exec())
   assert.equal(published.permission, 'read-only')
   assert.equal(f.contractor.preset, 'read-only')
   assert.equal(f.prompts.length, 1)
@@ -169,10 +170,10 @@ test('modern host uses per-step `when` and restores an archived contractor', asy
 
 test('legacy host (0.1.7–0.2.1) registers without `when` but keeps full lifecycle', async () => {
   const f = fixture('legacy')
-  assert.equal(f.registrations.length, 6, 'one discovery tool plus five quest tools')
+  assert.equal(f.registrations.length, 7, 'one discovery tool plus six quest tools')
   for (const item of f.registrations) assert.equal(item.options, undefined)
 
-  const published = await f.tools.get('guild_publish_quest').execute({ workspace: 'beta', task: 'x' }, f.exec())
+  const published = await f.tools.get('guild_publish_quest').execute({ workspace: 'beta', quest: 'x' }, f.exec())
   assert.equal(published.permission, 'read-only')
   assert.equal(f.contractor.preset, 'read-only')
   assert.equal(f.prompts[0].signal.aborted, false)
@@ -187,17 +188,17 @@ test('minimal host (0.1.2–0.1.5) synthesizes the preset catalog from names/opt
   const f = fixture('minimal')
   const publishTool = f.tools.get('guild_publish_quest')
   assert.deepEqual(publishTool.parameters.properties.permission.enum, ['read-only', 'workspace-write', 'danger-full-access'])
-  const published = await publishTool.execute({ workspace: 'beta', task: 'x' }, f.exec())
+  const published = await publishTool.execute({ workspace: 'beta', quest: 'x' }, f.exec())
   assert.equal(published.permission, 'read-only')
   assert.equal(f.contractor.preset, 'read-only')
   // `when` is absent before 0.2.2, so every definition is registered plainly.
-  assert.equal(f.registrations.length, 6, 'one discovery tool plus five quest tools')
+  assert.equal(f.registrations.length, 7, 'one discovery tool plus six quest tools')
   for (const item of f.registrations) assert.equal(item.options, undefined)
 })
 
 test('minimal host wakes an archived contractor without unarchive and says so', async () => {
   const f = fixture('minimal')
-  await f.tools.get('guild_publish_quest').execute({ workspace: 'beta', task: 'x' }, f.exec())
+  await f.tools.get('guild_publish_quest').execute({ workspace: 'beta', quest: 'x' }, f.exec())
   f.archived.push('S2')
 
   const resumed = await f.tools.get('guild_resume').execute({}, f.exec())
@@ -223,7 +224,7 @@ test('legacy host cascades from the pre-archive stop event', async () => {
   const f = fixture('legacy')
   assert.equal(f.listeners.has('workspace/session-archived'), false)
   assert.equal(f.listeners.has('workspace/session-stop'), true)
-  await f.tools.get('guild_publish_quest').execute({ workspace: 'beta', task: 'x' }, f.exec())
+  await f.tools.get('guild_publish_quest').execute({ workspace: 'beta', quest: 'x' }, f.exec())
   const [listener] = f.listeners.get('workspace/session-stop')
   await listener({ sessionId: 'S1' })
   await new Promise(done => setTimeout(done, 10))
@@ -235,7 +236,7 @@ test('modern host cascades from both archive events and passes stopActivity', as
   const f = fixture('modern')
   assert.equal(f.listeners.has('workspace/session-archived'), true)
   assert.equal(f.listeners.has('workspace/session-stop'), true)
-  await f.tools.get('guild_publish_quest').execute({ workspace: 'beta', task: 'x' }, f.exec())
+  await f.tools.get('guild_publish_quest').execute({ workspace: 'beta', quest: 'x' }, f.exec())
   const [listener] = f.listeners.get('workspace/session-archived')
   await listener({ sessionId: 'S1' })
   await new Promise(done => setTimeout(done, 10))
@@ -245,7 +246,7 @@ test('modern host cascades from both archive events and passes stopActivity', as
 
 test('a plain mock context without ctx.inject still mounts the quest tools', async () => {
   const f = fixture('legacy', {}, { inject: false })
-  assert.equal(f.registrations.length, 6)
+  assert.equal(f.registrations.length, 7)
   for (const item of f.registrations) assert.equal(item.options, undefined)
 })
 

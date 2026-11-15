@@ -1,13 +1,13 @@
-# dsh-workspace-guild × DSH rc 兼容性与适配器
+# dsh-session-guild × DSH rc 兼容性与适配器
 
-测试对象：`dsh-workspace-guild 0.0.2`（`0.0.x` 分支）
+测试对象：`dsh-session-guild 0.0.2`（`0.0.x` 分支）
 测试日期：2026-11-15
 测试环境：npm 发布的各 DSH rc 包，每个版本使用独立 `DSH_HOME`、私有 store 与非 3080 端口。生产 checkout 与 3080 服务全程未触碰；一次性产物不属于本仓库。
 
 ## 结论
 
 - **0.2.2-rc.1+**：完整兼容。委托 → 回报 → 归档 → 找回 → 级联全部通过，含 `sessionController.state`、`tools.when`、`workspace/session-archived`。
-- **0.1.7-rc.1 – 0.2.1**：完整委托链路通过。降级项：没有 `sessionController.state`（`running` 恒为 false）、没有 `tools.when`（六个工具常驻）、0.2.1 之前没有 `workingDirectory.get`（用会话头 cwd）。
+- **0.1.7-rc.1 – 0.2.1**：完整委托链路通过。降级项：没有 `sessionController.state`（`running` 恒为 false）、没有 `tools.when`（七个 Session 相关工具常驻）、0.2.1 之前没有 `workingDirectory.get`（用会话头 cwd）。
 - **0.1.5-rc.1 – 0.1.5-rc.3**：委托 / 回报通过；`guild_resume` 会原地唤醒归档受托会话但无法取消归档（宿主没有 `unarchiveSession`）；没有归档事件，因此不级联。
 - **0.1.2-rc.1**：插件能安装、加载并注册 6 个工具，适配器选择 `v1`；但该版本自身在创建会话时 `agent-presets` 的 `standard` preset 挂载失败（`Cannot read properties of undefined (reading 'parent')`），委托无法完成，与本插件无关。
 - **< 0.1.2**：没有 `sessionController`，只注册 `guild_list_workspaces` 并告警，不假装能委托。
@@ -33,7 +33,7 @@
 3. **运行态**：只有 `sessionController.state` 存在时才读；否则 `running` 为 false，不影响委托状态。
 4. **归档恢复**：0.1.7+ 调 `unarchiveSession`；0.1.5 返回 `restored:false` 但仍投递“继续”，并在结果 note 中明确“仍在归档列表”。
 5. **归档级联**：按代际只订阅该代际存在的事件；`archiveSession` 在 0.1.7+ 传 `{ stopActivity: true }`，0.1.5 只传 id。
-6. **工具可见性**：0.2.2+ 传 `{ when }`；更早版本六个工具常驻，角色限制仍在每个 `execute()` 内。
+6. **工具可见性**：0.2.2+ 传 `{ when }`；更早版本七个 Session 相关工具常驻，角色限制仍在每个 `execute()` 内。
 
 ## 运行矩阵（真实宿主）
 
@@ -67,6 +67,12 @@
 
 `SessionCreateRequest.workspaceId` 从 0.1.2-rc.1 起就存在且生效，不是 0.1.7 才有的能力。
 
+> 运行矩阵中的 `6/6` 是 0.0.2 实测时的工具数。当前源码注册 7 个 Session 相关工具
+> （新增 `guild_collect`）。回报的 job 投递是能力探测式的：宿主有 `ctx.jobs` 时以
+> 委托方会话为 owner 登记 `guild-quest` 任务，结果由 `job_output` 或
+> `guild_collect` 读出；没有该服务时 `auto` 自动退回本文实测的 prompt 消息投递，
+> 生命周期不变。
+
 ## 已知宿主问题（非插件）
 
 - **0.1.2-rc.1**：`agent-presets` 的 `standard` preset 在创建会话时挂载失败，任何 `sessionController.create()` 都会失败。0.1.5 已修复。插件在该版本上能加载、列出工作区，但委托无法完成。
@@ -84,9 +90,9 @@
 ## 测试与验证
 
 ```bash
-cd /home/liumenghan/dsh-workspace-guild/0.0.x
+cd /home/liumenghan/dsh-session-guild/0.0.x
 npm run check            # index.js、lib/、lib/tools/ 全部语法检查
-node --test              # 24 个用例：适配器选择、四代宿主行为、cache 结构化重建
+node --test              # 32 个用例：适配器选择、四代宿主行为、cache 结构化重建、job 投递
 node .script/smoke.mjs   # 端到端假宿主冒烟
 ```
 

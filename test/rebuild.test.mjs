@@ -37,10 +37,10 @@ function publishResult(callId, questId, contractorSessionId, workspace) {
   }
 }
 
-function publishCall(callId, task, description) {
+function publishCall(callId, quest, description) {
   return {
     role: 'assistant',
-    content: [{ type: 'tool-call', id: callId, name: 'guild_publish_quest', args: { task, description } }],
+    content: [{ type: 'tool-call', id: callId, name: 'guild_publish_quest', args: { quest, description } }],
   }
 }
 
@@ -50,11 +50,11 @@ test('client cache rebuilds from message order and structured records only', asy
     id: 'S1',
     inheritedEventCount: 0,
     deriveMessages: () => [
-      publishCall('call-1', 'second task', 'second'),
+      publishCall('call-1', 'second quest', 'second'),
       publishResult('call-1', 'q-2', 'S2b', 'beta'),
       // Prose that looks like the old marker must never create a record.
       userText('[guild quest #q-decoy client=S1 workspace=/ws/x]'),
-      publishCall('call-2', 'first task', ''),
+      publishCall('call-2', 'first quest', ''),
       publishResult('call-2', 'q-1', 'S2a', 'alpha'),
       // Completion evidence: request identity only, no machine block.
       { role: 'user', source: { kind: 'user', rpcId: 'report:q-1' }, content: [{ type: 'text', text: 'done' }] },
@@ -70,9 +70,9 @@ test('client cache rebuilds from message order and structured records only', asy
   assert.equal(records[0].contractorSessionId, 'S2b')
   assert.equal(records[0].workspace, 'beta')
   assert.equal(records[0].permission, 'read-only')
-  assert.equal(records[0].task, 'second task')
+  assert.equal(records[0].quest, 'second quest')
   assert.equal(records[0].label, 'second')
-  assert.equal(cache.get('q-1').label, 'first task', 'an empty description falls back to the first task line')
+  assert.equal(cache.get('q-1').label, 'first quest', 'an empty description falls back to the first quest line')
   assert.equal(cache.get('q-decoy'), undefined, 'no record comes from prose')
   assert.equal('publishedAt' in records[0], false, 'the commission timestamp is gone')
 })

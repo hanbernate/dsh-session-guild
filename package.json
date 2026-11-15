@@ -1,7 +1,7 @@
 {
-  "name": "dsh-workspace-guild",
+  "name": "dsh-session-guild",
   "version": "0.0.2",
-  "description": "Multi-workspace quest publishing for DeepSeek Harness: publish a quest for a task in a fresh session in another workspace, track it in a rebuildable cache, and let the contractor report a summary back.",
+  "description": "Quest publishing for DeepSeek Harness: hand a quest to a fresh ordinary session in another workspace or beside the current one, track it in a rebuildable cache, and let the contractor report a summary back as a background job result.",
   "type": "module",
   "license": "MIT",
   "exports": {
@@ -26,11 +26,12 @@
     "deepseek-harness",
     "dsh-plugin",
     "cordis",
+    "session",
+    "sub-session",
     "workspace",
     "multi-workspace",
     "quest",
-    "quest",
-    "session",
+    "delegation",
     "automation"
   ],
   "dsh": {

@@ -14,12 +14,14 @@ lib/workspaces.js            工作区发现与目标匹配
 lib/permissions.js           权限目录、解析、写入与审批
 lib/sessions.js              会话查找与标题
 lib/cache.js                 内存 cache、从派生消息重建
+lib/quest-jobs.js            后台任务桥：登记/结算 guild-quest 任务
 lib/records.js               结构化记录块（guild.quest / guild.report）
 lib/signals.js               不可取消信号工厂
 lib/register.js              工具集、注册/注销、适配器挂载、事件订阅
 lib/tools/list-workspaces.js guild_list_workspaces
 lib/tools/publish-quest.js  guild_publish_quest
 lib/tools/list-quests.js    guild_list_quests
+lib/tools/collect.js        guild_collect
 lib/tools/append.js         guild_append
 lib/tools/resume.js         guild_resume
 lib/tools/report.js         guild_report
@@ -41,12 +43,13 @@ runtime 并调用辅助方法；工具之间不互相 import。
 
 | 文件 | 用途 |
 |---|---|
-| `lib/config.js` | `DEFAULTS` 与 `normalizeConfig`。校验 `maxTaskChars` / `summaryChars` 为正整数，非法值回落默认值。 |
+| `lib/config.js` | `DEFAULTS` 与 `normalizeConfig`。校验 `maxQuestChars` / `summaryChars` 为正整数，非法值回落默认值。 |
 | `lib/paths.js` | `canonical`（realpath，失败时退回词法绝对路径）、`sameDirectory`、`directoryOf`（优先 `workingDirectory.get`，退回会话头 cwd）。 |
 | `lib/workspaces.js` | `list`、`archivedIds`、`descriptors`、`currentDirectory`、`currentWorkspace`、`matchWorkspace`。匹配顺序：id → 标题 → basename → symlink 感知的绝对路径。 |
-| `lib/permissions.js` | 依赖 `ctx.permissionPresets`：`presetCatalog`、`resolvePermission`（显式参数 → 配置默认 → 继承）、`applyPermission`（只写一次）、`confirmQuest`（`requireApproval` 与 `never` 策略）。 |
+| `lib/permissions.js` | 依赖 `ctx.permissionPresets`：`presetCatalog`、`resolvePermission`（显式参数 → 配置默认 → 继承）、`applyPermission`（只写一次）、`confirmQuest`（`requireApproval` 与 `never` 策略）、`defaultPermissionText`（把配置默认权限交给模型看的措辞，工具定义只引用不自己拼）。 |
 | `lib/sessions.js` | `liveSession`、`waitForSession`（40 次 × 10ms）、`sessionTitleOf`、`renameSession`。 |
 | `lib/cache.js` | 纯内存 cache：`add`/`patch`/`byClient`/`byContractor`；`ensureClient` / `ensureContractor` 从 `Session.deriveMessages()` 里的结构化 `guild.quest` / `guild.report` 块重建。不读事件日志、不做文本正则、不写任何持久化存储。 |
+| `lib/quest-jobs.js` | 后台任务桥：`start` 以委托方会话为 owner 登记 `guild-quest` 任务并返回 job id；`deliver` / `fail` 结算 producer 的 deferred；`cancel` 把委托置为 `cancelled` 并尽力终止受托会话当前 turn。形态与 `JobOutcome.result` 对齐：回报是"值"，由 `job_output` 一次性交出。 |
 | `lib/records.js` | `questRecord` / `reportRecord` / `recordBlock` 生成结构化记录块；`messagesOf` / `machineRecord` / `rpcIdOf` 提供结构化读取，不使用正则。 |
 | `lib/signals.js` | `commitSignal()`：给投递、回报、观测用的全新、永不中止的 AbortSignal。 |
 
@@ -54,18 +57,19 @@ runtime 并调用辅助方法；工具之间不互相 import。
 
 | 文件 | 用途 |
 |---|---|
-| `lib/register.js` | 创建五个 Session 工具的 set：`guild_publish_quest` 没有 `when`，始终可见；`guild_list_quests`/`guild_append`/`guild_resume` 在会话发布过委托后出现，`guild_report` 在会话收到委托后出现；两者都只追加不删除。`createRegistration` 在 0.2.2+ 上带 `{ when }` 注册，老宿主上普通注册；`unregister` 释放上一轮定义。`mountQuestTools` 选择并 pin 适配器、注册工具、订阅 `permission-presets/catalog-changed` 与归档事件。 |
+| `lib/register.js` | 创建六个 Session 工具的 set：`guild_publish_quest` 没有 `when`，始终可见；`guild_list_quests`/`guild_collect`/`guild_append`/`guild_resume` 在会话发布过委托后出现，`guild_report` 在会话收到委托后出现；两者都只追加不删除。`createRegistration` 在 0.2.2+ 上带 `{ when }` 注册，老宿主上普通注册；`unregister` 释放上一轮定义。`mountQuestTools` 选择并 pin 适配器、注册工具、订阅 `permission-presets/catalog-changed` 与归档事件。 |
 
 ### 工具实现
 
 | 文件 | 用途 |
 |---|---|
 | `lib/tools/list-workspaces.js` | `guild_list_workspaces`：列出工作区并标出当前工作区；唯一在 apply 时注册的工具。 |
-| `lib/tools/publish-quest.js` | `guild_publish_quest`：解析目标与权限、可选审批、创建会话、写入权限、写入内存 cache、不可取消地投递需求；`cascadeArchive` 随该工具归档委托人的受托会话。 |
-| `lib/tools/list-quests.js` | `guild_list_quests`：按委托先后（消息顺序）列出本会话的记录（输出 `quests`），合并 live 观测。 |
+| `lib/tools/publish-quest.js` | `guild_publish_quest`：解析目标与权限、可选审批、创建会话、写入权限、登记回报任务、写入内存 cache、不可取消地投递需求；`cascadeArchive` 随该工具归档委托人的受托会话。 |
+| `lib/tools/list-quests.js` | `guild_list_quests`：按委托先后（消息顺序）列出本会话的记录（输出 `quests`），合并 live 观测；live 受托会话会先补一次 cache 重建，让重启后的 completed 可见。 |
+| `lib/tools/collect.js` | `guild_collect`：不等待地读回报。摘要来源：内存 cache → live 受托会话派生消息 → 冷读 `sessionController.events` 历史页里的 `guild.report` 块。 |
 | `lib/tools/append.js` | `guild_append`：向该委托的受托会话投递追加指令；已归档时提示改用 `guild_resume`。 |
 | `lib/tools/resume.js` | `guild_resume`：只恢复 `in_progress` 记录；归档受托会话先 unarchive，再唤醒；运行中的跳过。 |
-| `lib/tools/report.js` | `guild_report`：受托会话回报摘要；先投递，再把记录置为 `completed`。 |
+| `lib/tools/report.js` | `guild_report`：受托会话回报摘要；`job` 投递结算委托方会话的后台任务（不产生用户消息），接收任务已不存在时只记录，`prompt` 投递保持旧的消息路径。 |
 
 ### 测试、配置与文档
 
@@ -76,7 +80,7 @@ runtime 并调用辅助方法；工具之间不互相 import。
 | `.script/smoke.mjs` | 端到端假宿主冒烟：可见性、工作区解析、审批门禁、cache 重建、回报、继续、级联。 |
 | `docs/*.md` | 中文文档：概览、工具、生命周期、架构、兼容性、限制。 |
 | `locale/en.json`、`locale/zh.json` | 插件管理器标题、描述、详情页路径。 |
-| `cordis.patch.yml` | bundle 插入的插件行（`id: workspace-guild`）。 |
+| `cordis.patch.yml` | bundle 插入的插件行（`id: session-guild`）。 |
 | `package.json` | 包元数据、`dsh.bundle.patch`、`engines.dsh`、`files`（含 `lib` 与全部文档）。 |
 | `icon.svg` | 插件图标。 |
 
@@ -110,13 +114,15 @@ apply(ctx, config)
 
 | 事实 | 来源 |
 |---|---|
-| 委托元数据 | client 会话中 `guild_publish_quest` 结果的第二个文本块（`{"kind":"guild.quest",…}`）：quest id、受托会话、工作区、路径、权限；`task` / `label` 来自同一消息里 assistant 的 tool-call 参数 |
-| 完成 | client 会话中的 report 用户消息：`source.rpcId = report:<questId>`，以及内容里的 `guild.report` 块 |
+| 委托元数据 | client 会话中 `guild_publish_quest` 结果的第二个文本块（`{"kind":"guild.quest",…}`）：quest id、受托会话、工作区、路径、权限；`quest` / `label` 来自同一消息里 assistant 的 tool-call 参数 |
+| 完成 | 进程内 `guild_report` 直接 patch cache；重启后由受托会话工具结果里的 `guild.report` 块（含 `summary`）重建，或由冷读历史页恢复。`prompt` 投递的旧委托仍以 client 会话中的 `report:<questId>` 用户消息为证据 |
+| 汇报载体 | `guild.quest` 块里的 `jobId` / `delivery`；`guild-quest` 后台任务归属于 client 会话，其释放/重启会取消任务（回报随后走 `guild_collect` 补读） |
 | 受托侧身份 | contractor 会话中投递消息里的 `guild.quest` 块 |
 | cache | 纯内存；插件启动时为空，第一次访问某个 Session 时从它的 `deriveMessages()` 重建 |
 
 `lib/cache.js` 的 `ensureClient` / `ensureContractor` 负责重建；`guild_list_quests`、
-`guild_append`、`guild_resume`、`guild_report` 和 `when` 谓词都会先确保对应缓存。
+`guild_collect`、`guild_append`、`guild_resume`、`guild_report` 和 `when` 谓词都会先确
+保对应缓存。
 
 ### 为什么不持久化
 
@@ -173,7 +179,7 @@ DSH 的 Session log 本身已经是可回放的持久事实。插件再维护一
 1. `apply` 立即注册 `guild_list_workspaces`。
 2. 探测 `tools.resolve` / `tools.executable`，决定是否支持按需可见。
 3. `ctx.inject` 等待 `sessionController` 与 `workspaceRegistry`。
-4. `lib/register.js` 选择适配器并 pin，注册五个工具，订阅：
+4. `lib/register.js` 选择适配器并 pin，注册六个工具，订阅：
    - `permission-presets/catalog-changed` → 重新注册，刷新权限 enum；
    - 适配器的归档事件 → 级联归档。
 5. 所有注册和订阅都在 `ctx.effect` 内，随插件释放。

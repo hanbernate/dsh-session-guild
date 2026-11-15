@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Workspace guild",
+    "description": "Publish a quest for a task in a fresh session in another workspace; the contractor confirms details, runs the work, and reports a summary back so the client session can continue. The contractor starts read-only, and open quests are not resumed automatically after a restart."
+  }
+}

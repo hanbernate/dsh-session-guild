@@ -45,5 +45,13 @@
   "scripts": {
     "test": "node --test",
     "check": "node --check index.js && for f in lib/*.js lib/tools/*.js; do node --check \"$f\" || exit 1; done"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hanbernate/dsh-session-guild.git"
+  },
+  "homepage": "https://github.com/hanbernate/dsh-session-guild",
+  "bugs": {
+    "url": "https://github.com/hanbernate/dsh-session-guild/issues"
   }
 }

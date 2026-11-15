@@ -90,7 +90,7 @@
 ## 测试与验证
 
 ```bash
-cd /home/liumenghan/dsh-session-guild/0.0.x
+cd <repo>/0.0.x
 npm run check            # index.js、lib/、lib/tools/ 全部语法检查
 node --test              # 32 个用例：适配器选择、四代宿主行为、cache 结构化重建、job 投递
 node .script/smoke.mjs   # 端到端假宿主冒烟

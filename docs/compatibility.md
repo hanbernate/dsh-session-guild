@@ -7,12 +7,12 @@
 
 | 适配器 | DSH 范围 | 关键能力 | 行为 |
 |---|---|---|---|
-| `dsh-0.2.2` | 0.2.2-rc.1+ | `sessionController.state`、`tools.when`、`workspace/session-archived`、`unarchiveSession` | 完整：按需可见、受托会话运行态、归档恢复、双归档事件级联 |
-| `dsh-0.1.7` | 0.1.7-rc.1 – 0.2.1 | 无 `state`、无 `tools.when`；0.2.1 起有 `workingDirectory.get`；有 `unarchiveSession`；只有 `workspace/session-stop` | 六个工具常驻，`running` 恒为 false，完整生命周期，从 stop 级联 |
-| `dsh-0.1.2` | 0.1.2-rc.1 – 0.1.5 | 无 `permissionPresets.catalog`、无 `workingDirectory.get`、无 `unarchiveSession`、无归档事件 | 权限目录由 `names`/`optionOf` 合成；cwd 用会话头；继续操作原地唤醒；不级联 |
-| `unsupported` | < 0.1.2 | 没有 `sessionController` | 只注册 `guild_list_workspaces` 并告警；不假装能委托 |
+| `latest` | 0.2.2-rc.1+ | `sessionController.state`、`tools.when`、`workspace/session-archived`、`unarchiveSession` | 完整：按需可见、受托会话运行态、归档恢复、双归档事件级联 |
+| `v2` | 0.1.7-rc.1 – 0.2.1 | 无 `state`、无 `tools.when`；0.2.1 起有 `workingDirectory.get`；有 `unarchiveSession`；只有 `workspace/session-stop` | 六个工具常驻，`running` 恒为 false，完整生命周期，从 stop 级联 |
+| `v1` | 0.1.2-rc.1 – 0.1.5 | 无 `permissionPresets.catalog`、无 `workingDirectory.get`、无 `unarchiveSession`、无归档事件 | 权限目录由 `names`/`optionOf` 合成；cwd 用会话头；继续操作原地唤醒；不级联 |
+| `v0` | < 0.1.2 | 没有 `sessionController` | 只注册 `guild_list_workspaces` 并告警；不假装能委托 |
 
-`ADAPTERS` 的顺序是 modern → legacy → minimal → read-only。第一个
+`ADAPTERS` 的顺序是 latest → v2 → v1 → v0。第一个
 `accepts(capabilities)` 返回 true 的适配器生效；只读回退永远匹配。
 
 ## 选择与挂载

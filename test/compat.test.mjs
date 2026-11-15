@@ -16,16 +16,16 @@ import {
   detectCapabilities,
   directoryFromHeader,
   directoryViaService,
-  legacyAdapter,
-  minimalAdapter,
-  modernAdapter,
+  latestAdapter,
   namesPresetOptions,
   noSessionState,
   noUnarchive,
-  readOnlyAdapter,
   selectAdapter,
   sessionState,
   unarchiveSession,
+  v0Adapter,
+  v1Adapter,
+  v2Adapter,
 } from '../lib/compat.js'
 
 const CONTROLLER = {
@@ -111,23 +111,23 @@ test('detectCapabilities probes services and the tools API, not a version string
   }))
 })
 
-test('selectAdapter follows the generation order and falls back read-only', () => {
-  assert.equal(selectAdapter(capabilities()), modernAdapter)
-  assert.equal(selectAdapter(capabilities({ controllerState: false, toolWhen: false })), legacyAdapter)
-  assert.equal(selectAdapter(capabilities({ controllerState: false, toolWhen: false, presetCatalog: false, unarchive: false })), minimalAdapter)
-  assert.equal(selectAdapter(capabilities({ sessionController: false })), readOnlyAdapter)
-  assert.equal(readOnlyAdapter.available, false)
-  assert.equal(ADAPTERS.at(-1), readOnlyAdapter)
+test('selectAdapter follows the generation order and falls back to v0', () => {
+  assert.equal(selectAdapter(capabilities()), latestAdapter)
+  assert.equal(selectAdapter(capabilities({ controllerState: false, toolWhen: false })), v2Adapter)
+  assert.equal(selectAdapter(capabilities({ controllerState: false, toolWhen: false, presetCatalog: false, unarchive: false })), v1Adapter)
+  assert.equal(selectAdapter(capabilities({ sessionController: false })), v0Adapter)
+  assert.equal(v0Adapter.available, false)
+  assert.equal(ADAPTERS.at(-1), v0Adapter)
 })
 
-test('modern and legacy adapters know their archive events and restore support', () => {
-  assert.deepEqual([...modernAdapter.archiveEvents], [ARCHIVED_EVENT, STOP_EVENT])
-  assert.deepEqual([...legacyAdapter.archiveEvents], [STOP_EVENT])
-  assert.deepEqual([...minimalAdapter.archiveEvents], [])
-  assert.equal(modernAdapter.toolWhen, true)
-  assert.equal(legacyAdapter.toolWhen, false)
-  assert.equal(minimalAdapter.canUnarchive, false)
-  assert.equal(legacyAdapter.canUnarchive, true)
+test('latest and v2 adapters know their archive events and restore support', () => {
+  assert.deepEqual([...latestAdapter.archiveEvents], [ARCHIVED_EVENT, STOP_EVENT])
+  assert.deepEqual([...v2Adapter.archiveEvents], [STOP_EVENT])
+  assert.deepEqual([...v1Adapter.archiveEvents], [])
+  assert.equal(latestAdapter.toolWhen, true)
+  assert.equal(v2Adapter.toolWhen, false)
+  assert.equal(v1Adapter.canUnarchive, false)
+  assert.equal(v2Adapter.canUnarchive, true)
 })
 
 test('catalogPresetOptions reads defaultOptions and drops advertised-but-unresolvable presets', () => {

@@ -17,6 +17,7 @@
     "locale/*.json",
     "docs",
     "icon.svg",
+    "COMPATIBILITY.md",
     "README.md",
     "README.zh-CN.md"
   ],

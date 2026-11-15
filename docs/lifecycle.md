@@ -115,7 +115,7 @@ Host 会跳过 notice，结果由那次工具调用返回。
 - 被 compaction 遮蔽的旧委托不会重建；模型同样看不到它们。
 - 不追加自定义 Session 事件。外部插件写入未标记的新事件类型，会让该会话在
   重启后拒绝加载（`unknown event type ... refusing to interpret the log`）。
-- 0.0.2 及更早版本写下的 `presentationMeta` 不再被读取，那些旧委托无法重建。
+- 旧包 0.0.2 及更早版本写下的 `presentationMeta` 不再被读取，那些旧委托无法重建。
 
 代码文件用途和模块划分见 [architecture.md](architecture.md)；每个工具的具体
 行为见 [tools.md](tools.md)。

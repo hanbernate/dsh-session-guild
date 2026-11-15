@@ -1,6 +1,8 @@
 # dsh-session-guild × DSH rc 兼容性与适配器
 
-测试对象：`dsh-session-guild 0.0.2`（`0.0.x` 分支）
+测试对象：`dsh-session-guild 0.0.1`（`0.0.x` 分支）
+
+> 版本说明：本包由 `dsh-workspace-guild` 改名而来，版本从 `0.0.1` 重新起算；文中「旧包 0.0.2」指改名前的 `dsh-workspace-guild@0.0.2` 及其写下的会话数据。
 测试日期：2026-11-15
 测试环境：npm 发布的各 DSH rc 包，每个版本使用独立 `DSH_HOME`、私有 store 与非 3080 端口。生产 checkout 与 3080 服务全程未触碰；一次性产物不属于本仓库。
 
@@ -67,7 +69,7 @@
 
 `SessionCreateRequest.workspaceId` 从 0.1.2-rc.1 起就存在且生效，不是 0.1.7 才有的能力。
 
-> 运行矩阵中的 `6/6` 是 0.0.2 实测时的工具数。当前源码注册 7 个 Session 相关工具
+> 运行矩阵中的 `6/6` 是旧包 0.0.2 实测时的工具数。当前源码注册 7 个 Session 相关工具
 > （新增 `guild_collect`）。回报的 job 投递是能力探测式的：宿主有 `ctx.jobs` 时以
 > 委托方会话为 owner 登记 `guild-quest` 任务，结果由 `job_output` 或
 > `guild_collect` 读出；没有该服务时 `auto` 自动退回本文实测的 prompt 消息投递，
@@ -81,7 +83,7 @@
 
 ## 与旧版兼容性结论的差异
 
-旧报告里的 P0（`sessionController.prompt` 少传 AbortSignal）和不写自定义 Session 事件的状态模型已在 0.0.1 重写中修复；本报告基于 0.0.2 的适配器实现重新实测：
+旧报告里的 P0（`sessionController.prompt` 少传 AbortSignal）和不写自定义 Session 事件的状态模型已在旧包 0.0.1 重写中修复；本报告基于旧包 0.0.2 的适配器实现重新实测：
 
 - 三处 `prompt` 都传入不可取消信号或 `exec.signal`；
 - 委托状态不落插件私有存储：`guild_publish_quest` 结果与投递/回报消息里的结构化 `guild.quest` / `guild.report` 块是事实来源，进程内 cache 在重启后从派生消息按需重建；

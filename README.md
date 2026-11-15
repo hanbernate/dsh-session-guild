@@ -22,8 +22,25 @@ to carry all of that context. The Guild inverts that split:
 | Main-session context | large | relatively small |
 
 Like an adventurers' guild: you publish a quest, the plugin opens a normal
-session in the target workspace; the contractor owns the execution plan and
-decides how to proceed, and the result is reported back to the client session.
+session; the contractor owns the execution plan and decides how to proceed, and
+the result is reported back to the client session.
+
+## Two scenarios
+
+### 1. The work belongs to another workspace
+
+The repo, plugin, service, or path the user names lives in another workspace.
+Publish the quest there and let that workspace's own session read, run, and
+edit; this session never reaches across, and receives only the summary.
+
+### 2. This session does not need the details
+
+The task stays in this workspace, but the session is already long, or you would
+rather not follow the design and execution here. The quest opens a sub-session
+beside this one in the same workspace: the plan, the file reads, and the edits
+stay there, and only the goal and the summary stay here.
+
+## Requirements
 
 - Requires **DSH ≥ 0.1.5-rc.1**
 - No npm dependencies; requires the DSH `permission-presets` plugin (`ctx.permissionPresets`)
@@ -33,7 +50,7 @@ decides how to proceed, and the result is reported back to the client session.
 - Every registered workspace can host a quest by default
 
 Two sides of one relationship: the **client** session posts the quest; the
-**contractor** session in the target workspace executes it.
+**contractor** sub-session executes it.
 
 
 ## How it works after installation
@@ -55,9 +72,8 @@ You describe the quest
   you continue with the result
 ```
 
-1. Ask your assistant to publish the quest in another workspace. Name the
-   repo, plugin, service, or path; if the target is ambiguous, it lists the
-   registered workspaces first.
+1. Ask your assistant to publish the quest. Name the repo, plugin, service, or
+   path; if the target is ambiguous, it lists the registered workspaces first.
 2. A fresh **ordinary session** is created in that workspace and titled
    `🏰 <label> (from <source workspace>)`. It is not a hidden sub-agent: you can open
    it, talk to it, and change its permission at any time.

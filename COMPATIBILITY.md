@@ -1,9 +1,8 @@
 # dsh-workspace-guild × DSH rc 兼容性与适配器
 
-测试对象：`dsh-workspace-guild 0.0.2`（`0.0.x/` 分支）
+测试对象：`dsh-workspace-guild 0.0.2`（`0.0.x` 分支）
 测试日期：2026-11-15
-测试宿主：`/home/liumenghan/deepseek-harness-test`（0.2.2-rc.3）+ npm 发布的各 rc 包，全部独立 `DSH_HOME`、独立端口。生产 checkout `/home/liumenghan/deepseek-harness` 与 3080 端口服务全程未触碰。
-测试环境：`/home/liumenghan/deepseek-harness-test`（0.2.2-rc.3）+ npm 发布的各 rc 包，全部独立 `DSH_HOME`、独立端口。生产 checkout `/home/liumenghan/deepseek-harness` 与 3080 端口服务全程未触碰。当次运行的一次性报告、证据、日志与临时脚本按测试规范写在测试 checkout 的 `tmp/` 下，结论定稿后即清理，不在插件仓库或测试 checkout 长期保留。
+测试环境：npm 发布的各 DSH rc 包，每个版本使用独立 `DSH_HOME`、私有 store 与非 3080 端口。生产 checkout 与 3080 服务全程未触碰；一次性产物不属于本仓库。
 
 ## 结论
 
@@ -38,7 +37,7 @@
 
 ## 运行矩阵（真实宿主）
 
-每个版本都是全新 `DSH_HOME` + 私有 pnpm/npm store + 私有端口，插件以 `link` 方式装进 `web` profile；`COMPAT_PROBE_E2E=1` 跑完整生命周期。
+每个版本都是全新 `DSH_HOME` + 私有 pnpm/npm store + 私有端口，插件以 `link` 方式装进 `web` profile，并跑完整生命周期。
 
 | 版本 | 安装/加载 | 工具注册 | 委托 | 回报 | 归档后恢复 | 委托人会话归档级联 | 备注 |
 |---|---|---|---|---|---|---|---|
@@ -48,12 +47,6 @@
 | 0.2.0-rc.2 | ✅ | 6/6 | ✅ | ✅ | ✅ | ✅ | 同上，cwd 用会话头 |
 | 0.2.1-rc.5 | ✅ | 6/6 | ✅ | ✅ | ✅ | ✅ | 有 `workingDirectory.get`，仍无 `state` |
 | 0.2.2-rc.3 | ✅ | 6/6 | ✅ | ✅ | ✅ | ✅ | 完整：`state` + `when` + 双归档事件 |
-
-运行产物是一次性的：当次报告、逐版本 `boot.log`、隔离 `DSH_HOME` 与临时脚本按规范写在测试 checkout 的 `tmp/` 下，结论定稿后已删除；这里只保留结论与复现方式。
-
-- 全量汇总：6 个版本 × 安装/加载/工具注册/委托/回报/归档恢复/级联 的结果矩阵（即上表）
-- 复验：清理调试代码后，用 0.1.5-rc.3 / 0.1.7-rc.2 / 0.2.2-rc.3 重跑，结论与上表一致
-- 静态矩阵：解析每个 rc tag 的 `packages/extensions/tool-cordis/src/api-catalog.ts` 与相关源码，得出“能力首次出现版本”
 
 ## 能力首次出现版本
 
@@ -93,15 +86,8 @@
 ```bash
 cd /home/liumenghan/dsh-workspace-guild/0.0.x
 npm run check            # index.js、lib/、lib/tools/ 全部语法检查
-node --test              # 18 个用例：适配器选择 + 四代宿主行为
+node --test              # 24 个用例：适配器选择、四代宿主行为、cache 结构化重建
 node .script/smoke.mjs   # 端到端假宿主冒烟
 ```
 
-真实宿主矩阵（在测试 checkout 逐版本跑，产物写在 `tmp/` 下、跑完清理）：
-
-```bash
-cd /home/liumenghan/deepseek-harness-test
-# 每个版本：全新 DSH_HOME + 私有 pnpm/npm store + 非 3080 端口
-# 插件以 link 装入 web profile；COMPAT_PROBE_E2E=1 跑完整生命周期
-# 覆盖版本：0.1.2-rc.1 0.1.5-rc.3 0.1.7-rc.2 0.2.0-rc.2 0.2.1-rc.5 0.2.2-rc.3
-```
+真实宿主矩阵（上表）是一次性验证的结论；逐版本安装、启动与探针脚本不随插件仓库保留。

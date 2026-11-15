@@ -22,14 +22,14 @@
 `guild_list_workspaces` 和 `guild_publish_quest` 在每个会话都可见。
 
 其余四个工具在 DSH 0.2.2-rc.1+ 上按 step 准入，使用
-`ToolRegistrationOptions.when`，由从 Session log 重建的内存 cache 决定：
+`ToolRegistrationOptions.when`，由从 `Session.deriveMessages()` 重建的内存 cache 决定：
 
 - 发布过委托的会话能看到 `guild_list_quests`、`guild_append`、`guild_resume`；
-- 收到过委托的会话能看到 `guild_report`。投递标记随需求进入日志，所以受托会话从
-  第一步就能看到它。
+- 收到过委托的会话能看到 `guild_report`。投递的 `guild.quest` 块随需求进入消息，
+  所以受托会话从第一步就能看到它。
 
 Session log 只追加、不删除，cache 重建后工具仍然可见。这里没有角色层；cache 是
-内存的，可随时从日志重建。工具从隐藏变为可见时，Host 会用 `tool-addition`
+内存的，可随时从派生消息重建。工具从隐藏变为可见时，Host 会用 `tool-addition`
 开发者消息告知模型。
 
 0.2.1 及更早没有 `when`，六个工具在每个会话都注册。每个 `execute()` 内的归属检查
@@ -65,16 +65,16 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
   session id 的错误，方便手动清理空会话。
 - 归档委托人会话时，`guild_publish_quest` 导出的 `cascadeArchive` 会级联归档该委托人的受托会话。
 
-投递的提示词只包含委托 id、委托人会话 id、工作区路径和任务原文（目标/验收标准）；
-不包含执行计划、方案或步骤。怎么执行由受托会话自己决定；任务完成后由它调用
-`guild_report` 汇报结果。
+投递的提示词包含任务原文（目标/验收标准）和一个结构化的 `guild.quest` 块（委托 id、
+委托人/受托会话 id、工作区、路径、权限）；不包含执行计划、方案或步骤。怎么执行由
+受托会话自己决定；任务完成后由它调用 `guild_report` 汇报结果。
 
 ## `guild_list_quests`
 
 - 输入：无。
-- 输出：`{ quests: [...] }`，包含调用方创建过的每条记录，按委托时间从早到晚排列。
-- `status` 是委托状态：`in_progress`、`completed` 或 `failed`。如果 cache 记录
-  仍是 `in_progress`，但委托人会话日志里已有 report 标记，则显示 `completed`。
+- 输出：`{ quests: [...] }`，包含调用方创建过的每条记录，按消息顺序（委托先后）排列。
+- `status` 是委托状态：`in_progress`、`completed` 或 `failed`。重建时 report 用户
+  消息（`report:<questId>` / `guild.report` 块）会直接把记录置为 `completed`。
 - `archived` 和 `running` 只是实时观测。宿主没有 `sessionController.state` 时，
   `running` 恒为 `false`。
 - 投递或权限警告会放在 `note` 里。
@@ -91,7 +91,7 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
 ## `guild_resume`
 
 - 输入：可选的 `questIds`；省略表示所有未完成委托。
-- 只处理 `status: in_progress` 且日志里还没有 report 标记的记录。
+- 只处理 `status: in_progress` 的记录。
 - 受托会话已归档且宿主支持时，用 `workspaceRegistry.unarchiveSession` 恢复原会话，
   再投递“继续”消息。绝不会新建会话。
 - 0.1.5 没有 `unarchiveSession`：适配器原地唤醒受托会话，并在结果里注明它仍在

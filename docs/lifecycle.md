@@ -45,9 +45,10 @@
 1. 摘要作为 queue 模式的用户消息投递到委托人会话。
 2. 记录置为 `completed`，写入 `reportedAt`。
 
-投递发生在委托状态写入之前，所以之后即使存储失败，摘要也不会丢。report 标记
-留在 client 的 Session log 里；`guild_list_quests` 和 `guild_resume` 会用它校正 `completed`，
-因此存储状态写入失败也不会把已回报的委托当成未完成。同一条委托重复回报会被拒绝。
+投递发生在委托状态写入之前，所以之后即使存储失败，摘要也不会丢。报告以
+`report:<questId>` 作为请求身份投递到 client 会话，并带上 `guild.report` 块；cache
+重建时用这两者判定 `completed`，因此状态写入失败也不会把已回报的委托当成未完成。
+同一条委托重复回报会被拒绝。
 
 ## 追加指令
 
@@ -93,14 +94,15 @@
 ## 状态与缓存
 
 - 插件不写任何持久化存储；Session log 是唯一事实来源。
-- client log 保存 `guild_publish_quest` 的 tool result `meta`（委托元数据）和
-  `[guild report #...]` 完成标记；contractor log 保存
-  `[guild quest #...]` 投递标记和 `guild_report` result meta。
+- client 会话保存 `guild_publish_quest` 结果里的 `guild.quest` 块，以及
+  `report:<questId>` + `guild.report` 块的 report 用户消息；contractor 会话保存
+  投递消息里的 `guild.quest` 块和 `guild_report` 结果里的 `guild.report` 块。
 - 进程内只保留一个可重建的 cache；DSH 重启后 cache 为空，第一次访问某个 Session
-  时从它的日志重建。
+  时从它的 `deriveMessages()`（模型可见 surface）重建，不扫事件日志。
+- 被 compaction 遮蔽的旧委托不会重建；模型同样看不到它们。
 - 不追加自定义 Session 事件。外部插件写入未标记的新事件类型，会让该会话在
   重启后拒绝加载（`unknown event type ... refusing to interpret the log`）。
-- 由旧版本插件写入、没有 `presentationMeta` 的委托无法从日志重建。
+- 0.0.2 及更早版本写下的 `presentationMeta` 不再被读取，那些旧委托无法重建。
 
 代码文件用途和模块划分见 [architecture.md](architecture.md)；每个工具的具体
 行为见 [tools.md](tools.md)。

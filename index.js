@@ -11,12 +11,12 @@
  * - `lib/register.js` owns the tool set and the mount/event subscriptions.
  *
  * State model (see docs/architecture.md):
- * - The plugin never persists quest state. The Session logs are the source of
- *   truth: the client log carries the `guild_publish_quest` result meta and
- *   report markers; the contractor log carries the delivered quest marker and
- *   `guild_report` result meta.
+ * - The plugin never persists quest state. The Session's derived messages are
+ *   the source of truth: the `guild_publish_quest` result carries a structured
+ *   `guild.quest` block, `guild_report` carries a `guild.report` block, and a
+ *   delivered report is a `report:<questId>` user message.
  * - `lib/cache.js` keeps the records in memory and rebuilds them on demand
- *   after a restart.
+ *   after a restart from `Session.deriveMessages()` — no log scan.
  * - Quest status is independent of the contractor Session's state: `in_progress`
  *   until the contractor's model calls `guild_report`, even when it is
  *   idle, waiting for permission, interrupted, or archived.
@@ -109,7 +109,7 @@ function createRuntime(ctx, settings) {
   const workspaces = createWorkspaces({ host })
   const sessions = createSessions({ host })
   const permissions = createPermissions({ ctx, settings, host })
-  const cache = createQuestCache({ sessions })
+  const cache = createQuestCache()
   /** Observation only; it never changes quest state. */
   const observeContractor = async sessionId => {
     const archived = workspaces.archivedIds().includes(sessionId)

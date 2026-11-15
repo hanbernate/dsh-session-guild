@@ -1,7 +1,7 @@
 {
   "name": "dsh-workspace-guild",
   "version": "0.0.2",
-  "description": "Multi-workspace quest publishing for DeepSeek Harness: publish a quest for a task in a fresh session in another workspace, track it as a durable quest, and let the contractor report a summary back.",
+  "description": "Multi-workspace quest publishing for DeepSeek Harness: publish a quest for a task in a fresh session in another workspace, track it in a rebuildable cache, and let the contractor report a summary back.",
   "type": "module",
   "license": "MIT",
   "exports": {

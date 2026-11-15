@@ -1,6 +1,6 @@
 # 生命周期
 
-一次委托有两条独立的生命周期：**委托记录**（持久状态）和**受托会话**（普通会话，
+一次委托有两条独立的生命周期：**委托记录**（从 Session log 重建的内存状态）和**受托会话**（普通会话，
 可能空闲、执行中、暂停或归档）。把两者分开是本插件的核心设计规则。
 
 ## 委托状态
@@ -90,15 +90,17 @@
 - 权限目录的形状随宿主代际变化；`lib/compat.js` 统一成
   `{ value, name, sandbox, approval }`。
 
-## 持久化规则
+## 状态与缓存
 
-- 委托状态存在插件自己的 storage domain（`workspace_guild` / `quests`），
-  不写进 Session 日志。
-- Session 日志只承载模型需要的两条上下文：受托会话里的需求、委托人会话里的摘要。
+- 插件不写任何持久化存储；Session log 是唯一事实来源。
+- client log 保存 `guild_publish_quest` 的 tool result `meta`（委托元数据）和
+  `[guild report #...]` 完成标记；contractor log 保存
+  `[guild quest #...]` 投递标记和 `guild_report` result meta。
+- 进程内只保留一个可重建的 cache；DSH 重启后 cache 为空，第一次访问某个 Session
+  时从它的日志重建。
 - 不追加自定义 Session 事件。外部插件写入未标记的新事件类型，会让该会话在
   重启后拒绝加载（`unknown event type ... refusing to interpret the log`）。
-- storage domain 和表名必须匹配 `^[a-z][a-z0-9_]*$`；带连字符会让 `open()`
-  报 `invalid unit name`。
+- 由旧版本插件写入、没有 `presentationMeta` 的委托无法从日志重建。
 
 代码文件用途和模块划分见 [architecture.md](architecture.md)；每个工具的具体
 行为见 [tools.md](tools.md)。

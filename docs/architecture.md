@@ -12,8 +12,8 @@ lib/config.js                配置默认值与归一化
 lib/paths.js                 realpath/cwd 辅助
 lib/workspaces.js            工作区发现与目标匹配
 lib/permissions.js           权限目录、解析、写入与审批
-lib/sessions.js              会话查找、日志证据、标题
-lib/store.js                 storage domain、记录 CRUD、内存回退
+lib/sessions.js              会话查找、日志读取、日志证据、标题
+lib/cache.js                 内存 cache、从 Session log 重建
 lib/signals.js               不可取消信号工厂
 lib/register.js              工具集、注册/注销、适配器挂载、事件订阅
 lib/tools/list-workspaces.js guild_list_workspaces
@@ -44,8 +44,8 @@ runtime 并调用辅助方法；工具之间不互相 import。
 | `lib/paths.js` | `canonical`（realpath，失败时退回词法绝对路径）、`sameDirectory`、`directoryOf`（优先 `workingDirectory.get`，退回会话头 cwd）。 |
 | `lib/workspaces.js` | `list`、`archivedIds`、`descriptors`、`currentDirectory`、`currentWorkspace`、`matchWorkspace`。匹配顺序：id → 标题 → basename → symlink 感知的绝对路径。 |
 | `lib/permissions.js` | 依赖 `ctx.permissionPresets`：`presetCatalog`、`resolvePermission`（显式参数 → 配置默认 → 继承）、`applyPermission`（只写一次）、`confirmQuest`（`requireApproval` 与 `never` 策略）。 |
-| `lib/sessions.js` | `liveSession`、`waitForSession`（40 次 × 10ms）、`reported` / `reportedIds`（从 client log 的 report 标记确认完成），以及 `sessionTitleOf`、`renameSession`。 |
-| `lib/store.js` | `workspace_guild` / `quests` 的 schema 与 CRUD：`save`、`read`、`patch`、`byClient`、`byContractor`。没有 `storageDomain` 时退化为进程内 Map。 |
+| `lib/sessions.js` | `liveSession`、`waitForSession`（40 次 × 10ms）、`eventsOf` / `textOf`（读日志）、`reported` / `reportedIds`（从 client log 的 report 标记确认完成），以及 `sessionTitleOf`、`renameSession`。 |
+| `lib/cache.js` | 纯内存 cache：`add`/`patch`/`byClient`/`byContractor`；`ensureClient` 从 client log 的 `guild_publish_quest` tool result meta 重建，`ensureContractor` 从投递标记与 `guild_report` result meta 重建。插件不写任何持久化存储。 |
 | `lib/signals.js` | `commitSignal()`：给投递、回报、观测用的全新、永不中止的 AbortSignal。 |
 
 ### 工具注册与挂载
@@ -59,7 +59,7 @@ runtime 并调用辅助方法；工具之间不互相 import。
 | 文件 | 用途 |
 |---|---|
 | `lib/tools/list-workspaces.js` | `guild_list_workspaces`：列出工作区并标出当前工作区；唯一在 apply 时注册的工具。 |
-| `lib/tools/publish-quest.js` | `guild_publish_quest`：解析目标与权限、可选审批、创建会话、写入权限、保存记录、不可取消地投递需求；`cascadeArchive` 随该工具归档委托人的受托会话。 |
+| `lib/tools/publish-quest.js` | `guild_publish_quest`：解析目标与权限、可选审批、创建会话、写入权限、写入内存 cache、不可取消地投递需求；`cascadeArchive` 随该工具归档委托人的受托会话。 |
 | `lib/tools/list-quests.js` | `guild_list_quests`：按委托时间列出本会话的记录（输出 `quests`），合并 live 观测。 |
 | `lib/tools/append.js` | `guild_append`：向该委托的受托会话投递追加指令；已归档时提示改用 `guild_resume`。 |
 | `lib/tools/resume.js` | `guild_resume`：只恢复 `in_progress` 记录；归档受托会话先 unarchive，再唤醒；运行中的跳过。 |
@@ -71,7 +71,7 @@ runtime 并调用辅助方法；工具之间不互相 import。
 |---|---|
 | `test/compat.test.mjs` | 适配器选择、能力探测、权限目录合成、cwd、运行态、unarchive、archive 签名。 |
 | `test/generations.test.mjs` | 在四代宿主形状上挂载插件，验证注册数量、`when`、委托、回报、归档恢复、级联。 |
-| `.script/smoke.mjs` | 端到端假宿主冒烟：可见性、工作区解析、审批门禁、持久委托、回报、继续、级联、无 storage 回退。 |
+| `.script/smoke.mjs` | 端到端假宿主冒烟：可见性、工作区解析、审批门禁、cache 重建、回报、继续、级联。 |
 | `docs/*.md` | 中文文档：概览、工具、生命周期、架构、兼容性、限制。 |
 | `locale/en.json`、`locale/zh.json` | 插件管理器标题、描述、详情页路径。 |
 | `cordis.patch.yml` | bundle 插入的插件行（`id: workspace-guild`）。 |
@@ -88,7 +88,7 @@ apply(ctx, config)
   │    ├─ createWorkspaces
   │    ├─ createSessions
   │    ├─ createPermissions
-  │    ├─ createStore
+  │    ├─ createQuestCache
   │    └─ observeContractor（内联）
   ├─ detectCapabilities(ctx).toolWhen
   ├─ createRegistration
@@ -103,60 +103,49 @@ apply(ctx, config)
 
 ## 状态模型
 
-持久事实只有三类：
+插件**不写任何持久化存储**。状态全部来自 Session log，进程内只保留一个可重建的
+cache：
 
-| 事实 | 位置 | 含义 |
-|---|---|---|
-| 委托记录 | storage domain `workspace_guild` / 表 `quests` | 委托人和受托会话的 id、工作区、权限、任务、状态、时间戳 |
-| `status` | 同一条记录 | `in_progress` 直到 `guild_report`；投递失败为 `failed` |
-| 两条日志消息 | 委托人与受托会话日志 | 受托会话里的需求、委托人会话里的摘要——模型上下文，不是委托状态 |
+| 事实 | 来源 |
+|---|---|
+| 委托元数据 | client log 中 `guild_publish_quest` 的 `tool/result.data.meta`（`presentationMeta`）：quest id、受托会话、工作区、权限、任务、label |
+| 完成 | client log 中的 `[guild report #...]` 用户消息；`guild_report` 的 result meta 也标记完成 |
+| 受托侧身份 | contractor log 中的 `[guild quest #... client=...]` 投递标记 |
+| cache | 纯内存；插件启动时为空，第一次访问某个 Session 时从它的日志重建 |
 
-受托会话的 live/running/archived 只是观测，不会改记录。
+`lib/cache.js` 的 `ensureClient` / `ensureContractor` 负责重建；`guild_list_quests`、
+`guild_append`、`guild_resume`、`guild_report` 和 `when` 谓词都会先确保对应缓存。
 
-### 为什么委托记录不只存 Session log
+### 为什么不持久化
 
-Session log 确实可回放，report 标记也能证明完成；插件的 `guild_list_quests` 和
-`guild_resume` 会用 client log 里的 report 标记校正状态。但仅有日志不足以承担完整
-委托状态：
+DSH 的 Session log 本身已经是可回放的持久事实。插件再维护一份
+`storageDomain` 只会带来重复状态、迁移和版本兼容问题。现在：
 
-- 日志是**单会话**的，quest 是 client ↔ contractor 的跨会话关系。client log
-  只有 tool call/result，contractor log 只有需求；重建关系要解析事件并配对，
-  依赖工具事件 schema。
-- 已归档或冷的会话不一定能从 `sessions.get` 拿到；读取它们的日志需要可选的
-  `sessionQuery`，不是每个部署都挂载。storage domain 是可查询的索引。
-- `when` 每个 step 都要求值，全量扫描日志的成本随历史增长；工具可见性查询持久记录，委托元数据也走索引。
-- report 是模型可见的 user message，可以确认完成，但投递失败、label、permission、
-  workspace 等元数据仍需要记录。
+- 委托元数据放在 client log 的 tool result `meta` 里；
+- 完成证据是 client log 的 report 标记；
+- 受托侧只需要投递标记和 report result meta；
+- 重启后 cache 从这些日志按需重建，没有插件私有的持久化文件。
 
-### 为什么不写 Session 自定义事件
+代价是缓存重建依赖日志里已有的 `presentationMeta`。由旧版本插件写入、没有该
+meta 的委托无法重建；这是升级时需要接受的限制。
 
-外部插件追加一个未标记的新事件类型，会让该会话在下次启动时拒绝加载：
+### 为什么不写自定义 Session 事件
 
-```
-unknown event type ... refusing to interpret the log
-```
-
-而且 Session 变冷时无法写事件。storage domain 才是可持久、可重放的委托状态存放处。
-
-### 存储约束
-
-- domain 和表名必须匹配 `^[a-z][a-z0-9_]*$`；带连字符会让 `open()` 报
-  `invalid unit name`。
-- `recordSchema.parse` 在持久边界校验记录，形状不对直接抛错。
-- 没有 `storageDomain` 时退回进程内 Map，并打印警告。
+外部插件追加一个未标记的新事件类型，会让该会话在下次启动时拒绝加载。插件只使用
+已有的 `tool/result`、`user/message` 事件，不新增事件类型。
 
 ## 工具可见性
 
-没有角色层。工具可见性由持久记录直接决定，记录只追加、不删除：
+没有角色层。工具可见性由内存 cache 判断：
 
 - `guild_list_workspaces` 和 `guild_publish_quest` 始终可见。
 - 一个会话发布过委托后，`guild_list_quests`、`guild_append`、`guild_resume` 出现，
   并在之后的 step 一直可见。
-- 一个会话收到委托后，`guild_report` 出现。记录在投递需求之前保存，所以受托会话
-  从第一步就能看到 `guild_report`。
+- 一个会话收到委托后，`guild_report` 出现。投递标记随需求一起进入日志，所以受托
+  会话从第一步就能看到 `guild_report`。
 
-`lib/register.js` 里的 `hasPublishedQuest` / `hasReceivedQuest` 就是这两个
-`when` 谓词。它们查询持久记录，不做角色推导，也不维护内存缓存。0.2.2+ 用
+`lib/register.js` 里的 `hasPublishedQuest` / `hasReceivedQuest` 会调用 cache 的
+`hasPublished` / `hasReceived`；cache 为空时先重建当前 Session 的部分。0.2.2+ 用
 `{ when }`；老宿主注册全部定义，`execute()` 内的归属检查仍然生效。
 
 ## 信号
@@ -176,7 +165,7 @@ unknown event type ... refusing to interpret the log
 
 1. `apply` 立即注册 `guild_list_workspaces`。
 2. 探测 `tools.resolve` / `tools.executable`，决定是否支持按需可见。
-3. `ctx.inject` 等待三个 Session 服务。
+3. `ctx.inject` 等待 `sessionController` 与 `workspaceRegistry`。
 4. `lib/register.js` 选择适配器并 pin，注册五个工具，订阅：
    - `permission-presets/catalog-changed` → 重新注册，刷新权限 enum；
    - 适配器的归档事件 → 级联归档。
@@ -186,8 +175,8 @@ unknown event type ... refusing to interpret the log
 
 - `test/compat.test.mjs` 固定适配器选择与降级返回值。
 - `test/generations.test.mjs` 在四种宿主形状上验证委托、回报、归档恢复、级联。
-- `.script/smoke.mjs` 是端到端假宿主冒烟，覆盖可见性、解析、审批门禁、持久
-  委托、回报、继续、级联，以及无 storage 的回退。
+- `.script/smoke.mjs` 是端到端假宿主冒烟，覆盖可见性、解析、审批门禁、cache
+  重建、回报、继续、级联。
 
 测试只 import `../index.js`，所以模块拆分对它们不可见；在文件之间移动代码时，
 行为必须保持不变。

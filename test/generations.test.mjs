@@ -57,28 +57,6 @@ function makeCtx(services, { inject = true } = {}) {
   return { ctx, tools, registrations, listeners }
 }
 
-function fakeStorage() {
-  const documents = new Map()
-  return {
-    documents,
-    async open(spec) {
-      return {
-        name: spec.name,
-        table: () => ({
-          get: key => documents.get(key),
-          put: async (key, value) => {
-            spec.tables.quests.valueSchema.parse(value)
-            documents.set(key, value)
-          },
-          entries: () => documents.entries(),
-          size: documents.size,
-        }),
-        close: async () => {},
-      }
-    },
-  }
-}
-
 const PRESET_SPECS = {
   'read-only': { sandbox: 'read-only', approval: 'ask' },
   'workspace-write': { sandbox: 'workspace-write', approval: 'ask' },
@@ -94,7 +72,6 @@ function fixture(generation, overrides = {}, options = {}) {
   const prompts = []
   const archiveCalls = []
   const cleanups = []
-  const storage = fakeStorage()
 
   const controller = {
     async create(request) {
@@ -150,7 +127,6 @@ function fixture(generation, overrides = {}, options = {}) {
   }
 
   const services = {
-    storageDomain: storage,
     workspaceRegistry: registry,
     sessionController: generation === 'unsupported' ? undefined : controller,
     sessions: { get: id => sessions.get(id) },
@@ -169,7 +145,7 @@ function fixture(generation, overrides = {}, options = {}) {
   const clientAgent = { session: client }
   const exec = () => ({ agent: clientAgent, signal: new AbortController().signal, callId: 'call-1' })
   apply(built.ctx, {})
-  return { ...built, services, client, contractor, archived, created, prompts, archiveCalls, storage, exec, clientAgent }
+  return { ...built, services, client, contractor, archived, created, prompts, archiveCalls, exec, clientAgent }
 }
 
 test('modern host uses per-step `when` and restores an archived contractor', async () => {

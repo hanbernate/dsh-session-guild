@@ -1,7 +1,7 @@
 /**
  * Workspace guild: publish a quest for a task in one DSH workspace to a fresh
- * ordinary Session that belongs to another workspace, track it as a durable
- * quest record, and let the contractor report back so the client can continue.
+ * ordinary Session that belongs to another workspace, keep it in a rebuildable
+ * in-memory cache, and let the contractor report back so the client can continue.
  *
  * This entry point owns the composition:
  * - `createHost` exposes the optional Cordis services lazily.
@@ -11,12 +11,12 @@
  * - `lib/register.js` owns the tool set and the mount/event subscriptions.
  *
  * State model (see docs/architecture.md):
- * - Durable quest state lives in a plugin-owned storage domain (`quests`
- *   table), never in the Session log: an external plugin cannot append a new
- *   event type without corrupting later replays, and Session events cannot be
- *   written while the Session is cold.
- * - The Session log only carries the delivered requirement (contractor) and the
- *   report message (client), which the model needs as context.
+ * - The plugin never persists quest state. The Session logs are the source of
+ *   truth: the client log carries the `guild_publish_quest` result meta and
+ *   report markers; the contractor log carries the delivered quest marker and
+ *   `guild_report` result meta.
+ * - `lib/cache.js` keeps the records in memory and rebuilds them on demand
+ *   after a restart.
  * - Quest status is independent of the contractor Session's state: `in_progress`
  *   until the contractor's model calls `guild_report`, even when it is
  *   idle, waiting for permission, interrupted, or archived.
@@ -25,7 +25,7 @@
  *
  * The plugin is dependency free (Node builtins only). It touches host services
  * through soft lookups so a deployment that composes only some of them still
- * loads: `storageDomain`, `workspaceRegistry`, `sessionController`,
+ * loads: `workspaceRegistry`, `sessionController`,
  * `permissionPresets`, `sessionTitle`, `approval`, `workingDirectory`,
  * `sandboxPolicy`, `sessions`, `agents`.
  *
@@ -41,7 +41,7 @@ import { normalizeConfig } from './lib/config.js'
 import { createPermissions } from './lib/permissions.js'
 import { createRegistration, mountQuestTools } from './lib/register.js'
 import { createSessions } from './lib/sessions.js'
-import { createStore } from './lib/store.js'
+import { createQuestCache } from './lib/cache.js'
 import { createListWorkspacesTool } from './lib/tools/list-workspaces.js'
 import { createWorkspaces } from './lib/workspaces.js'
 import { commitSignal } from './lib/signals.js'
@@ -107,9 +107,9 @@ function createHost(ctx) {
 function createRuntime(ctx, settings) {
   const host = createHost(ctx)
   const workspaces = createWorkspaces({ host })
-  const store = createStore(ctx)
   const sessions = createSessions({ host })
   const permissions = createPermissions({ ctx, settings, host })
+  const cache = createQuestCache({ sessions })
   /** Observation only; it never changes quest state. */
   const observeContractor = async sessionId => {
     const archived = workspaces.archivedIds().includes(sessionId)
@@ -118,7 +118,7 @@ function createRuntime(ctx, settings) {
     return { archived, running: state?.running === true, active: state?.active === true, live: live !== undefined }
   }
 
-  return { ctx, settings, host, workspaces, sessions, permissions, store, observeContractor }
+  return { ctx, settings, host, workspaces, sessions, permissions, cache, observeContractor }
 }
 
 /**

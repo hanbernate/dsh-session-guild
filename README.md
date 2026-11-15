@@ -3,7 +3,7 @@
 English | [中文](README.zh-CN.md)
 
 Publish a quest for a task from one DeepSeek Harness workspace to a fresh
-session in another workspace, keep it on a durable quest list, and receive a
+session in another workspace, keep it on a quest list, and receive a
 summary back when the work is done.
 
 ## Standard subagent vs. a Guild contractor

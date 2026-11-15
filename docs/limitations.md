@@ -8,12 +8,12 @@ README 汇总了用户在生产环境依赖本插件前必须知道的限制；�
 - 只有受托会话调用 `guild_report`，委托才会变为 `completed`。空闲、等权限、
   turn 被暂停、turn 被中断、受托会话被归档，都不算完成。
 - 受托会话做完了但没有回报，委托会一直是 `in_progress`。
-- 投递失败会把记录置为 `failed`。受托会话执行过程中的报错不会反映到委托状态；
-  需要受托会话自己回报。
+- 投递失败会把 cache 记录置为 `failed`；重启后失败记录不会重建。受托会话执行过程
+  中的报错不会反映到委托状态，需要受托会话自己回报。
 - 已完成的委托不能接受第二次回报。追加指令会唤醒受托会话，但不会重开委托；下一个
   需要追踪的结果要新开一条委托。
-- 委托状态是持久化的；工具可见性不做内存缓存，直接由追加式记录决定。重启后
-  委托记录不会丢，但没有任何东西会自动续跑。
+- 委托状态来自 Session log，进程内 cache 可重建。重启后没有东西会自动续跑；
+  旧版本日志若没有 `presentationMeta`，对应的委托无法重建。
 
 ## 消息与可见性
 
@@ -56,8 +56,6 @@ README 汇总了用户在生产环境依赖本插件前必须知道的限制；�
 - 跨会话委托需要 `sessionController`、`permissionPresets`、`workspaceRegistry`。
   `permissionPresets` 是硬依赖；没有它插件不会挂载。headless 或最小化部署若缺少
   其余服务，则只剩工作区发现。
-- 没有 `storageDomain` 时，委托状态退化为进程内 Map：当前进程内可用，重启后丢失，
-  其他进程也看不到。
 - 0.1.2-rc.1 无法完成委托：Host 在创建会话时挂载 `standard` preset 失败
   （`Cannot read properties of undefined (reading 'parent')`）。这是宿主 bug；
   插件本身能加载。
@@ -68,8 +66,8 @@ README 汇总了用户在生产环境依赖本插件前必须知道的限制；�
 
 - 需求受 `maxTaskChars` 限制（默认 20000）；摘要按 `summaryChars` 截断
   （默认 4000）。
-- 需求留在受托会话日志里；摘要留在委托人会话日志里；委托记录存在插件的 storage
-  domain（`workspace_guild` / `quests`）。
+- 需求留在受托会话日志里；摘要留在委托人会话日志里；委托元数据来自 client log 的
+  `guild_publish_quest` result meta。插件没有私有持久化文件。
 - 插件不追加自定义 Session 事件。未标记的事件类型会让会话在重启后拒绝加载。
 - 插件没有网络请求，只用 Node 内置模块。
 - 禁用插件不会删除受托会话或委托记录。受托会话是普通会话，会保留自己的状态；但

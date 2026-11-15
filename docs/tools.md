@@ -22,14 +22,15 @@
 `guild_list_workspaces` 和 `guild_publish_quest` 在每个会话都可见。
 
 其余四个工具在 DSH 0.2.2-rc.1+ 上按 step 准入，使用
-`ToolRegistrationOptions.when`，由持久记录直接决定：
+`ToolRegistrationOptions.when`，由从 Session log 重建的内存 cache 决定：
 
 - 发布过委托的会话能看到 `guild_list_quests`、`guild_append`、`guild_resume`；
-- 收到过委托的会话能看到 `guild_report`。记录在投递需求前保存，所以受托会话从
+- 收到过委托的会话能看到 `guild_report`。投递标记随需求进入日志，所以受托会话从
   第一步就能看到它。
 
-记录只追加、不删除，所以工具出现后不会消失。这里没有角色层，也没有内存缓存；
-工具从隐藏变为可见时，Host 会用 `tool-addition` 开发者消息告知模型。
+Session log 只追加、不删除，cache 重建后工具仍然可见。这里没有角色层；cache 是
+内存的，可随时从日志重建。工具从隐藏变为可见时，Host 会用 `tool-addition`
+开发者消息告知模型。
 
 0.2.1 及更早没有 `when`，六个工具在每个会话都注册。每个 `execute()` 内的归属检查
 仍然生效，误用会被拒绝，只是省不下提示词。
@@ -57,10 +58,11 @@
 - `requireApproval: true` 时，在创建任何东西之前先弹确认卡。委托人会话的审批策略
   为 `never` 时，委托会被拒绝，而不是未经确认就启动。
 - 用 `sessionController.create({ workspaceId })` 创建会话，短暂等待它变为 live，
-  写入一次权限，重命名会话，保存委托记录，最后才投递需求。
+  写入一次权限，重命名会话，写入内存 cache，最后才投递需求。
 - 投递使用全新的、永不中止的信号：停止委托人 turn 不会取消一个已经创建了会话的
   委托。
-- 投递失败时记录变为 `failed`，工具抛出带 session id 的错误，方便手动清理空会话。
+- 投递失败时 cache 记录变为 `failed`（重启后不会重建失败记录），工具抛出带
+  session id 的错误，方便手动清理空会话。
 - 归档委托人会话时，`guild_publish_quest` 导出的 `cascadeArchive` 会级联归档该委托人的受托会话。
 
 投递的提示词只包含委托 id、委托人会话 id、工作区路径和任务原文（目标/验收标准）；
@@ -71,7 +73,7 @@
 
 - 输入：无。
 - 输出：`{ quests: [...] }`，包含调用方创建过的每条记录，按委托时间从早到晚排列。
-- `status` 是委托状态：`in_progress`、`completed` 或 `failed`。如果 storage 记录
+- `status` 是委托状态：`in_progress`、`completed` 或 `failed`。如果 cache 记录
   仍是 `in_progress`，但委托人会话日志里已有 report 标记，则显示 `completed`。
 - `archived` 和 `running` 只是实时观测。宿主没有 `sessionController.state` 时，
   `running` 恒为 `false`。

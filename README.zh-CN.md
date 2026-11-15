@@ -133,7 +133,7 @@ W
 
 插件按运行时能力探测选择适配器，不读版本号。详见
 [docs/compatibility.md](docs/compatibility.md) 和实测矩阵
-[COMPATIBILITY.md](../COMPATIBILITY.md)。
+[COMPATIBILITY.md](COMPATIBILITY.md)。
 
 ## 安装
 

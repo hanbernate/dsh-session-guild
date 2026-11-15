@@ -155,7 +155,7 @@ details.
 
 The plugin chooses its compatibility adapter by probing live services, not by
 reading a version string. See [docs/compatibility.md](docs/compatibility.md) and
-the measured [COMPATIBILITY.md](../COMPATIBILITY.md) matrix.
+the measured [COMPATIBILITY.md](COMPATIBILITY.md) matrix.
 
 ## Installation
 

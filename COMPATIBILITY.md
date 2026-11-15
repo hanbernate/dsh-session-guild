@@ -1,0 +1,107 @@
+# dsh-workspace-guild × DSH rc 兼容性与适配器
+
+测试对象：`dsh-workspace-guild 0.0.2`（`0.0.x/` 分支）
+测试日期：2026-11-15
+测试宿主：`/home/liumenghan/deepseek-harness-test`（0.2.2-rc.3）+ npm 发布的各 rc 包，全部独立 `DSH_HOME`、独立端口。生产 checkout `/home/liumenghan/deepseek-harness` 与 3080 端口服务全程未触碰。
+测试环境：`/home/liumenghan/deepseek-harness-test`（0.2.2-rc.3）+ npm 发布的各 rc 包，全部独立 `DSH_HOME`、独立端口。生产 checkout `/home/liumenghan/deepseek-harness` 与 3080 端口服务全程未触碰。当次运行的一次性报告、证据、日志与临时脚本按测试规范写在测试 checkout 的 `tmp/` 下，结论定稿后即清理，不在插件仓库或测试 checkout 长期保留。
+
+## 结论
+
+- **0.2.2-rc.1+**：完整兼容。委托 → 回报 → 归档 → 找回 → 级联全部通过，含 `sessionController.state`、`tools.when`、`workspace/session-archived`。
+- **0.1.7-rc.1 – 0.2.1**：完整委托链路通过。降级项：没有 `sessionController.state`（`running` 恒为 false）、没有 `tools.when`（六个工具常驻）、0.2.1 之前没有 `workingDirectory.get`（用会话头 cwd）。
+- **0.1.5-rc.1 – 0.1.5-rc.3**：委托 / 回报通过；`guild_resume` 会原地唤醒归档受托会话但无法取消归档（宿主没有 `unarchiveSession`）；没有归档事件，因此不级联。
+- **0.1.2-rc.1**：插件能安装、加载并注册 6 个工具，适配器选择 `v1`；但该版本自身在创建会话时 `agent-presets` 的 `standard` preset 挂载失败（`Cannot read properties of undefined (reading 'parent')`），委托无法完成，与本插件无关。
+- **< 0.1.2**：没有 `sessionController`，只注册 `guild_list_workspaces` 并告警，不假装能委托。
+- `package.json` 的 `engines.dsh` 因此定为 `>=0.1.5-rc.1`（第一个实际可完成委托的版本）。
+
+## 适配器
+
+所有版本差异集中在 [`lib/compat.js`](lib/compat.js)，`index.js` 与 `lib/` 只调用选中适配器的接口。适配器**按运行时能力探测**（`ctx.get()` 到的服务方法、`tools` 的 API），不读版本字符串；因此只组合了部分服务的 profile 也会得到真实降级。适配器与各代际降级的说明见 [`docs/compatibility.md`](docs/compatibility.md)。
+
+| 适配器 | 范围 | `permissionPresets.catalog` | `workingDirectory.get` | `sessionController.state` | `unarchiveSession` | `tools.when` | 归档事件 |
+|---|---|---|---|---|---|---|---|
+| `latest` | 0.2.2-rc.1+ | ✅ | ✅ | ✅ | ✅ | ✅ | `session-archived` + `session-stop` |
+| `v2` | 0.1.7-rc.1 – 0.2.1 | ✅ | 0.2.1+ | — | ✅ | — | `session-stop` |
+| `v1` | 0.1.2-rc.1 – 0.1.5 | —（用 `names`/`optionOf` 合成） | —（会话头 cwd） | — | — | — | 无 |
+| `v0` | < 0.1.2 | — | — | — | — | — | 无（只发现工作区） |
+
+选择顺序：`ADAPTERS = [latest, v2, v1, v0]`，第一个 `accepts(capabilities)` 的生效。`permissionPresets` 由插件级 `inject` 保证；`ctx.inject(['sessionController', 'workspaceRegistry'])` 保证适配器在其余 Session 服务就绪后才选择；`guild_list_workspaces` 在此之前就可用。`ToolRegistrationOptions.when` 是 `tools` 服务自身的能力，在 `apply` 时单独探测，因此不会因 Session 服务晚挂载而丢失按需可见。
+
+关键适配点：
+
+1. **权限目录**：0.1.7+ 读 `catalog()`；0.1.2–0.1.5 用 `names` + `optionOf` + `resolve` 合成同样的 `{ value, name, sandbox, approval }`，没有 `names` 时再按三个内置 preset 探测。
+2. **cwd**：优先 `workingDirectory.get(session)`，失败/缺失时退回 `session.header.cwd`。
+3. **运行态**：只有 `sessionController.state` 存在时才读；否则 `running` 为 false，不影响委托状态。
+4. **归档恢复**：0.1.7+ 调 `unarchiveSession`；0.1.5 返回 `restored:false` 但仍投递“继续”，并在结果 note 中明确“仍在归档列表”。
+5. **归档级联**：按代际只订阅该代际存在的事件；`archiveSession` 在 0.1.7+ 传 `{ stopActivity: true }`，0.1.5 只传 id。
+6. **工具可见性**：0.2.2+ 传 `{ when }`；更早版本六个工具常驻，角色限制仍在每个 `execute()` 内。
+
+## 运行矩阵（真实宿主）
+
+每个版本都是全新 `DSH_HOME` + 私有 pnpm/npm store + 私有端口，插件以 `link` 方式装进 `web` profile；`COMPAT_PROBE_E2E=1` 跑完整生命周期。
+
+| 版本 | 安装/加载 | 工具注册 | 委托 | 回报 | 归档后恢复 | 委托人会话归档级联 | 备注 |
+|---|---|---|---|---|---|---|---|
+| 0.1.2-rc.1 | ✅ | 6/6 | ❌ | — | — | — | 宿主 preset 挂载 bug，创建会话即失败 |
+| 0.1.5-rc.3 | ✅ | 6/6 | ✅ | ✅ | ⚠️ `restored:false` / `delivered:true` | ❌ | 无 `unarchiveSession` 与归档事件 |
+| 0.1.7-rc.2 | ✅ | 6/6 | ✅ | ✅ | ✅ `restored:true` | ✅ | `running` 恒 false，工具常驻 |
+| 0.2.0-rc.2 | ✅ | 6/6 | ✅ | ✅ | ✅ | ✅ | 同上，cwd 用会话头 |
+| 0.2.1-rc.5 | ✅ | 6/6 | ✅ | ✅ | ✅ | ✅ | 有 `workingDirectory.get`，仍无 `state` |
+| 0.2.2-rc.3 | ✅ | 6/6 | ✅ | ✅ | ✅ | ✅ | 完整：`state` + `when` + 双归档事件 |
+
+运行产物是一次性的：当次报告、逐版本 `boot.log`、隔离 `DSH_HOME` 与临时脚本按规范写在测试 checkout 的 `tmp/` 下，结论定稿后已删除；这里只保留结论与复现方式。
+
+- 全量汇总：6 个版本 × 安装/加载/工具注册/委托/回报/归档恢复/级联 的结果矩阵（即上表）
+- 复验：清理调试代码后，用 0.1.5-rc.3 / 0.1.7-rc.2 / 0.2.2-rc.3 重跑，结论与上表一致
+- 静态矩阵：解析每个 rc tag 的 `packages/extensions/tool-cordis/src/api-catalog.ts` 与相关源码，得出“能力首次出现版本”
+
+## 能力首次出现版本
+
+由各 tag 的 `packages/extensions/tool-cordis/src/api-catalog.ts` + 相关源码解析得出：
+
+| 能力 | 首次出现 |
+|---|---|
+| `dsh.bundle` profile 组合 | 0.0.1-rc.5 |
+| `sessionController.create/prompt` | 0.1.2-rc.1 |
+| `permissionPresets.catalog()` | 0.1.7-rc.1 |
+| `workspaceRegistry.unarchiveSession()` | 0.1.7-rc.1 |
+| `workspace/session-stop` | 0.1.7-rc.1 |
+| `approval.request(displayReason)` | 0.1.7-rc.2 |
+| `workingDirectory.get()` | 0.2.1-rc.1 |
+| `sessionController.state()` | 0.2.2-rc.1 |
+| `tools.register(definition, { when })` | 0.2.2-rc.1 |
+| `workspace/session-archived` | 0.2.2-rc.1 |
+
+`SessionCreateRequest.workspaceId` 从 0.1.2-rc.1 起就存在且生效，不是 0.1.7 才有的能力。
+
+## 已知宿主问题（非插件）
+
+- **0.1.2-rc.1**：`agent-presets` 的 `standard` preset 在创建会话时挂载失败，任何 `sessionController.create()` 都会失败。0.1.5 已修复。插件在该版本上能加载、列出工作区，但委托无法完成。
+- **0.0.1-rc.5**：该 npm 包在本机启动即失败（`user patch-layer watching requires the Cordis HMR service`），且没有 `sessionController`；不在支持范围。
+- **0.1.0 / 0.1.1 系列**：没有 `sessionController`，插件只注册工作区发现。
+
+## 与旧版兼容性结论的差异
+
+旧报告里的 P0（`sessionController.prompt` 少传 AbortSignal）和不写自定义 Session 事件的状态模型已在 0.0.1 重写中修复；本报告基于 0.0.2 的适配器实现重新实测：
+
+- 三处 `prompt` 都传入不可取消信号或 `exec.signal`；
+- 委托状态不落插件私有存储：`guild_publish_quest` 结果与投递/回报消息里的结构化 `guild.quest` / `guild.report` 块是事实来源，进程内 cache 在重启后从派生消息按需重建；
+- 0.1.2–0.1.5 的 `catalog` / `unarchive` / 事件差异现在由适配器承担，而不是让调用点直接抛错。
+
+## 测试与验证
+
+```bash
+cd /home/liumenghan/dsh-workspace-guild/0.0.x
+npm run check            # index.js、lib/、lib/tools/ 全部语法检查
+node --test              # 18 个用例：适配器选择 + 四代宿主行为
+node .script/smoke.mjs   # 端到端假宿主冒烟
+```
+
+真实宿主矩阵（在测试 checkout 逐版本跑，产物写在 `tmp/` 下、跑完清理）：
+
+```bash
+cd /home/liumenghan/deepseek-harness-test
+# 每个版本：全新 DSH_HOME + 私有 pnpm/npm store + 非 3080 端口
+# 插件以 link 装入 web profile；COMPAT_PROBE_E2E=1 跑完整生命周期
+# 覆盖版本：0.1.2-rc.1 0.1.5-rc.3 0.1.7-rc.2 0.2.0-rc.2 0.2.1-rc.5 0.2.2-rc.3
+```

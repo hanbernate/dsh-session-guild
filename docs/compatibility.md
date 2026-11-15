@@ -73,6 +73,6 @@
 `>=0.1.5-rc.1`，即第一个能真正完成委托的版本。
 
 完整实测矩阵、证据路径和复现命令见
-[COMPATIBILITY.md](../../COMPATIBILITY.md)。
+[COMPATIBILITY.md](../COMPATIBILITY.md)。
 
 用户可见的后果见 [limitations.md](limitations.md)。

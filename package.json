@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-guild",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Quest publishing for DeepSeek Harness: hand a quest to a fresh ordinary session that works out the detailed design itself and reports a summary back, with every quest tracked until it completes.",
   "type": "module",
   "license": "MIT",

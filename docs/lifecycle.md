@@ -7,8 +7,8 @@
 
 | 状态 | 何时写入 | 含义 |
 |---|---|---|
-| `in_progress` | 投递前保存记录，以及投递成功后 | 受托会话还没有回报 |
-| `completed` | 受托会话调用 `guild_report` | 摘要已记录：job 投递由委托方 `job_output` 读取，旧式 prompt 投递则是消息已送达 |
+| `in_progress` | 投递前保存记录；`guild_append` 重开一轮时 | 当前轮（`round`）还没有回报 |
+| `completed` | 受托会话调用 `guild_report` | 该轮摘要已记录：job 投递由委托方 `job_output` 读取，旧式 prompt 投递则是消息已送达 |
 | `cancelled` | 委托方的 `guild-quest` 任务被终止（`job_kill`、owner 释放） | 委托方不再等待；受托会话当前 turn 会被尽力取消 |
 | `failed` | 需求投递失败 | 会话可能存在，但委托从未开始 |
 
@@ -32,14 +32,19 @@
 2. 解析初始权限（显式参数、配置默认值，或继承调用方权限）。
 3. 可选地请求审批（`requireApproval: true`）。
 4. 在受托工作区创建普通会话。
-5. 等待会话 live，写入权限，重命名会话。
-6. 登记回报载体：默认在委托方会话名下开一个 `guild-quest` 后台任务（宿主没有
-   `jobs` 服务时退化为消息投递），把 `jobId` / `delivery` 写进委托记录和
-   `guild.quest` 块。
-7. 用全新的、永不中止的信号投递需求。
-8. 写入 `deliveredAt`；失败则结算任务为 failed、置为 `failed` 并返回 session id。
+5. 等待会话 live，写入权限。
+6. 可选：把发布时指定的 `provider` / `model` / `reasoning_effort` 只写到该会话
+   （`agents.get(sessionId).model.select`）。可用性在这之前确认，不可用就在投递前
+   失败；宿主没有 Agent 级选择时才退回 `sessionController.selectModel`（会改写部署
+   默认模型，`notes` 里明说）。
+7. 重命名会话。
+8. 登记回报载体：默认在委托方会话名下开一个 `guild-quest` 后台任务（宿主没有
+   `jobs` 服务时退化为消息投递），把 `jobId` / `delivery` / `round` / `selection`
+   写进委托记录和 `guild.quest` 块。
+9. 用全新的、永不中止的信号投递需求。
+10. 写入 `deliveredAt`；失败则结算任务为 failed、置为 `failed` 并返回 session id。
 
-先保存后投递是刻意的：在第 4 步和第 6 步之间崩溃时，会留下一条可见记录和一个
+先保存后投递是刻意的：在第 4 步和第 8 步之间崩溃时，会留下一条可见记录和一个
 可识别的会话，而不是一个被静默遗弃的会话。
 
 ## 回报
@@ -59,16 +64,29 @@ Host 会跳过 notice，结果由那次工具调用返回。
 `guild_collect` 读取（live 会话走派生消息，冷会话走历史页）。
 
 `reportDelivery: "prompt"` 保留旧行为：摘要作为 queue 模式的用户消息投递到委托人
-会话，请求身份是 `report:<questId>`，cache 重建时用它和 `guild.report` 块判定
-`completed`。摘要按 `summaryChars` 截断。同一条委托重复回报会被拒绝。
+会话，请求身份是 `report:<questId>`（第 1 轮）或 `report:<questId>:r<n>`（第 n 轮），
+cache 重建时用它和 `guild.report` 块（含 `round`）按轮次判定 `completed`。摘要按
+`summaryChars` 截断。**一轮只能回报一次**：同一轮重复回报被拒绝；下一轮用
+`guild_append` 打开。
 
-## 追加指令
+## 追加指令与轮次
 
-`guild_append` 用新指令唤醒受托会话，并在那边开始一轮。它使用工具调用自己的信号，
-所以中止委托人 turn 会取消追加指令。委托保持当前状态。
+`guild_append` 用新指令唤醒受托会话。它使用工具调用自己的信号，所以中止委托人 turn
+会取消追加指令。行为取决于当前状态：
 
-委托变为 `completed` 之后，追加指令**不会**重开委托，受托会话也不能对同一条委托
-再次回报。如果新工作需要独立追踪，请新开一条委托。
+- `in_progress`：当前轮还开着，只投递（steering）。不登记新任务、`round` 不变；受托
+  会话这一轮的回报照旧结算原来那个 `guild-quest` 任务。
+- `completed`：开第 N+1 轮。顺序是**先**登记新的 `guild-quest` 后台任务（owner 仍是
+  委托方会话），把记录改回 `in_progress`（带 `round` 与新 `jobId`），**再**投递追加
+  消息；消息里附 `guild.quest` 块（含 `round` / `jobId`）。因此委托方的 `job_output`
+  能在新一轮报告后拿到新摘要。
+  - 登记不了新任务时，投递前就失败，记录保持 `completed`（不会留下一个没人能结算的
+    开放轮次）。
+  - 投递失败时回滚到上一轮的 `completed` 状态（与新任务被结算为 `failed`）；这一轮
+    从未在日志里落过 `guild.quest` 块，所以冷重建也不会出现它。
+- `cancelled` / `failed`：拒绝，提示新开一条委托。
+
+同一轮不能回报两次；`guild_append` 开出的下一轮可以再报一次（见上）。
 
 ## 停止、重启、归档与恢复
 
@@ -106,16 +124,21 @@ Host 会跳过 notice，结果由那次工具调用返回。
 ## 状态与缓存
 
 - 插件不写任何持久化存储；Session log 是唯一事实来源。
-- client 会话保存 `guild_publish_quest` 结果里的 `guild.quest` 块（含 `jobId` /
-  `delivery`），以及旧式 prompt 投递产生的 `report:<questId>` + `guild.report`
-  用户消息；contractor 会话保存投递消息里的 `guild.quest` 块和 `guild_report`
-  结果里的 `guild.report` 块（含 `summary`，这是重启后补读的来源）。
+- client 会话保存 `guild_publish_quest` / `guild_append` 结果里的 `guild.quest` 块
+  （含 `round`、`jobId`、`delivery`，带模型时还有 `selection`），以及旧式 prompt
+  投递产生的 `report:<questId>`（或 `:r<n>`）+ `guild.report` 用户消息；contractor
+  会话保存每轮投递消息里的 `guild.quest` 块和 `guild_report` 结果里的 `guild.report`
+  块（含 `round` 与 `summary`，这是重启后补读的来源）。
+- 冷重建**按消息顺序折叠**：quest 块把该轮置为 `in_progress`，report 把同一轮置为
+  `completed`；更高轮次的 quest 块重开委托。折叠对轮次单调：同轮的 quest 块不会把
+  `completed` 降级（被 compaction 遮掉的 report 不会让旧轮复活），旧轮 report 也不会
+  结算新开的轮次。`publish → report → append → report` 重建后就是 `completed` 第 2 轮。
 - 进程内只保留一个可重建的 cache；DSH 重启后 cache 为空，第一次访问某个 Session
   时从它的 `deriveMessages()`（模型可见 surface）重建，不扫事件日志。
 - 被 compaction 遮蔽的旧委托不会重建；模型同样看不到它们。
 - 不追加自定义 Session 事件。外部插件写入未标记的新事件类型，会让该会话在
   重启后拒绝加载（`unknown event type ... refusing to interpret the log`）。
-- 旧包 0.0.2 及更早版本写下的 `presentationMeta` 不再被读取，那些旧委托无法重建。
+- 改名前的 `dsh-workspace-guild@0.0.2` 及更早版本写下的 `presentationMeta` 不再被读取，那些旧委托无法重建。
 
 代码文件用途和模块划分见 [architecture.md](architecture.md)；每个工具的具体
 行为见 [tools.md](tools.md)。

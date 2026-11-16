@@ -8,14 +8,18 @@
  * - `createRuntime` wires the shared helpers once per plugin instance.
  * - `lib/register.js` owns the tool set and its registration lifecycle.
  * - `lib/tools/*.js` holds one tool per file.
+ * - `lib/models.js` owns per-quest model selection (Agent-level first, the
+ *   deployment-default-rewriting `selectModel` only as a reported fallback).
  * - `lib/register.js` owns the tool set and the mount/event subscriptions.
  *
  * State model (see docs/architecture.md):
  * - The plugin never persists quest state. The Session's derived messages are
- *   the source of truth: the `guild_publish_quest` result carries a structured
- *   `guild.quest` block (with `jobId` / `delivery`), `guild_report` carries a
- *   `guild.report` block with the summary, and only a legacy `prompt`-delivered
- *   report is also a `report:<questId>` user message.
+ *   the source of truth: the `guild_publish_quest` / `guild_append` results
+ *   carry structured `guild.quest` blocks (with `round`, `jobId`, `delivery`,
+ *   and `selection` when a model was named), `guild_report` carries a
+ *   `guild.report` block with the round and summary, and only a legacy
+ *   `prompt`-delivered report is also a `report:<questId>` (or `:r<n>`) user
+ *   message. Rebuild folds these blocks in message order.
  * - `lib/cache.js` keeps the records in memory and rebuilds them on demand
  *   after a restart from `Session.deriveMessages()` — no log scan.
  * - Quest status is independent of the contractor Session's state: `in_progress`
@@ -28,7 +32,7 @@
  * through soft lookups so a deployment that composes only some of them still
  * loads: `workspaceRegistry`, `sessionController`,
  * `permissionPresets`, `sessionTitle`, `approval`, `workingDirectory`,
- * `sandboxPolicy`, `sessions`, `agents`, `jobs`.
+ * `sandboxPolicy`, `sessions`, `agents`, `jobs`, `llm`.
  *
  * Every rc-generation difference (permission catalog shape, working directory,
  * live state, archive restore, archive events, per-step tool visibility) lives
@@ -39,6 +43,7 @@
 
 import { detectCapabilities, selectAdapter } from './lib/compat.js'
 import { normalizeConfig } from './lib/config.js'
+import { createModels } from './lib/models.js'
 import { createPermissions } from './lib/permissions.js'
 import { createRegistration, mountQuestTools } from './lib/register.js'
 import { createSessions } from './lib/sessions.js'
@@ -99,6 +104,7 @@ function createHost(ctx) {
     sessions: () => ctx.get('sessions'),
     agents: () => ctx.get('agents'),
     jobs: () => ctx.get('jobs'),
+    llm: () => ctx.get('llm'),
   }
 }
 
@@ -112,6 +118,7 @@ function createRuntime(ctx, settings) {
   const workspaces = createWorkspaces({ host })
   const sessions = createSessions({ host })
   const permissions = createPermissions({ ctx, settings, host })
+  const models = createModels({ host, ctx })
   const cache = createQuestCache()
   const questJobs = createQuestJobs({ ctx, host, settings, cache })
   /** Observation only; it never changes quest state. */
@@ -122,7 +129,7 @@ function createRuntime(ctx, settings) {
     return { archived, running: state?.running === true, active: state?.active === true, live: live !== undefined }
   }
 
-  return { ctx, settings, host, workspaces, sessions, permissions, cache, questJobs, observeContractor }
+  return { ctx, settings, host, workspaces, sessions, permissions, models, cache, questJobs, observeContractor }
 }
 
 /**

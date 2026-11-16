@@ -37,10 +37,10 @@ function publishResult(callId, questId, contractorSessionId, workspace) {
   }
 }
 
-function publishCall(callId, quest, description) {
+function publishCall(callId, quest, title) {
   return {
     role: 'assistant',
-    content: [{ type: 'tool-call', id: callId, name: 'guild_publish_quest', args: { quest, description } }],
+    content: [{ type: 'tool-call', id: callId, name: 'guild_publish_quest', args: { quest, title } }],
   }
 }
 
@@ -72,7 +72,7 @@ test('client cache rebuilds from message order and structured records only', asy
   assert.equal(records[0].permission, 'read-only')
   assert.equal(records[0].quest, 'second quest')
   assert.equal(records[0].label, 'second')
-  assert.equal(cache.get('q-1').label, 'first quest', 'an empty description falls back to the first quest line')
+  assert.equal(cache.get('q-1').label, 'first quest', 'an empty title falls back to the first quest line')
   assert.equal(cache.get('q-decoy'), undefined, 'no record comes from prose')
   assert.equal('publishedAt' in records[0], false, 'the commission timestamp is gone')
 })
@@ -118,6 +118,41 @@ test('contractor cache rebuilds from the delivered quest block and report result
   assert.equal(record.workspacePath, '/ws/beta')
   assert.equal(record.status, 'completed')
   assert.equal(await cache.hasReceived(session), true)
+})
+
+test('the client cache keeps the model selection and the round across a rebuild', async () => {
+  const cache = createQuestCache()
+  const session = {
+    id: 'S1',
+    inheritedEventCount: 0,
+    deriveMessages: () => [{
+      role: 'tool',
+      toolCallId: 'call-1',
+      content: [recordBlock({
+        kind: 'guild.quest',
+        questId: 'q-1',
+        clientSessionId: 'S1',
+        contractorSessionId: 'S2',
+        workspace: 'beta',
+        workspacePath: '/ws/beta',
+        permission: 'read-only',
+        delivery: 'job',
+        jobId: 'guild-quest-1',
+        round: 2,
+        selection: { provider: 'opencode-go', model: 'deepseek-v4.1-flash', reasoningEffort: 'high' },
+      })],
+    }],
+  }
+  await cache.ensureClient(session)
+  const record = cache.get('q-1')
+  assert.equal(record.round, 2, 'a block that names a round keeps it')
+  assert.deepEqual(record.selection, {
+    provider: 'opencode-go',
+    model: 'deepseek-v4.1-flash',
+    reasoningEffort: 'high',
+  })
+  assert.equal(record.delivery, 'job')
+  assert.equal(record.jobId, 'guild-quest-1')
 })
 
 test('a completed record is not downgraded by a later in-progress record', async () => {

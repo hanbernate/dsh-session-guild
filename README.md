@@ -42,7 +42,7 @@ stay there, and only the goal and the summary stay here.
 
 ## Requirements
 
-- Requires **DSH ≥ 0.1.5-rc.1**
+- Requires **DSH ≥ 0.1.5-rc.1**; this package **0.0.2** adds per-quest model selection, follow-up rounds, and byte-budgeted quest titles
 - No npm dependencies; requires the DSH `permission-presets` plugin (`ctx.permissionPresets`)
 - Reports travel through the DSH background-job plugins (`@deepseek-ai/dsh-jobs` + `@deepseek-ai/dsh-tool-jobs`);
   without them the plugin falls back to message delivery
@@ -75,8 +75,9 @@ You describe the quest
 1. Ask your assistant to publish the quest. Name the repo, plugin, service, or
    path; if the target is ambiguous, it lists the registered workspaces first.
 2. A fresh **ordinary session** is created in that workspace and titled
-   `🏰 <label> (from <source workspace>)`. It is not a hidden sub-agent: you can open
-   it, talk to it, and change its permission at any time.
+   `📜 <title> (from <source workspace>)`, where the title is the publishing
+   model's `title` argument. It is not a hidden sub-agent: you can open it, talk
+   to it, and change its permission at any time.
 3. The contractor starts **read-only by default**. How it plans and executes is
    its concern; when it needs write access, it asks, and you grant it in that
    session.
@@ -87,6 +88,35 @@ You describe the quest
 
 Several quests can be in flight at once. Each workspace has its own files
 and state; contractors are independent of each other.
+
+## Choosing the model, and follow-up rounds
+
+Since 0.0.2 a quest can name the model the contractor must use:
+
+- `guild_publish_quest` takes optional `provider`, `model`, and `reasoning_effort`.
+  The contractor's first model step uses that route, and the **deployment default
+  model is not changed** (the plugin selects at Agent level, not through the
+  call that saves a new default).
+- An unavailable route fails the publish before the requirement is delivered,
+  and the error carries the session id — a quest never runs on the wrong model.
+- Only a host without Agent-level selection falls back to
+  `sessionController.selectModel`, whose deployment-default side effect is
+  stated in the returned `notes`; a host with neither capability refuses a
+  publish that names a model.
+
+`guild_append` is how you ask for more:
+
+- While the quest is `in_progress`, the follow-up is only delivered (steering):
+  no new job, and the round does not change.
+- When it is `completed`, the append opens round N+1: a new report job is
+  registered first, the quest is reopened, and only then is the message
+  delivered. The next `guild_report` sends that round's summary to the new
+  job, so `job_output` returns the new answer.
+- One report per round; `cancelled`/`failed` quests cannot be appended.
+
+The motivating use: a main session delegates a code review to a read-only
+sub-session running the main session's model, then appends follow-ups to the
+same sub-session and collects each round's report.
 
 ## Quest status is not session status
 
@@ -106,8 +136,9 @@ Config lives in the profile patch for the plugin row:
 - id: session-guild
   config:
     defaultPermissionPreset: read-only   # default; null inherits the caller permission
-    maxTaskChars: 20000
-    summaryChars: 4000
+    titleMaxBytes: 80                    # byte budget for the contractor session title
+    maxQuestChars: 20000
+    summaryChars: 4000                   # raise to 12000 for long reviews
     requireApproval: false               # true shows a confirmation card
     approveAppend: false                   # true confirms every follow-up
 ```
@@ -115,8 +146,9 @@ Config lives in the profile patch for the plugin row:
 | Key | Default | What it controls |
 |---|---|---|
 | `defaultPermissionPreset` | `read-only` | Initial permission of the contractor session. `null` inherits the caller's current permission. |
-| `maxTaskChars` | `20000` | Maximum length of the requirement text. |
-| `summaryChars` | `4000` | Maximum length of the summary sent back. |
+| `titleMaxBytes` | `80` | UTF-8 byte budget for the contractor session title. The `(from …)` attribution gives way first; the title itself is cut only after it is gone. Keep it equal to or below the deployment's `session-title` `maxTitleBytes`. |
+| `maxQuestChars` | `20000` | Maximum length of the requirement text. |
+| `summaryChars` | `4000` | Maximum length of the summary sent back. Raise it (for example `12000`) when reports are long, such as reviews. |
 | `requireApproval` | `false` | Whether to show a confirmation card before opening the contractor session. |
 | `approveAppend` | `false` | Whether to confirm every follow-up message sent to a contractor. |
 
@@ -140,10 +172,11 @@ Read these before relying on the plugin in production.
   neither idleness nor archiving changes it.
 - **No automatic resume.** After a restart, nothing is woken or replayed. You
   must ask for the open quests to be continued.
-- **A follow-up does not reopen a completed quest.** You can wake a
-  contractor to ask for corrections, but the quest remains completed and
-  the same quest cannot submit a second report. Create a new quest if
-  you need a new tracked result.
+- **One report per round; a follow-up opens the next round.** While a quest is
+  in progress an append only steers. After a report, an append reopens the
+  quest for round N+1 with a fresh report job, so the contractor can report
+  once more; a repeated report for the same round is refused. A cancelled or
+  failed quest cannot be appended — publish a new quest instead.
 - **Contractors start read-only.** You must grant write access in the
   contractor session, or set `defaultPermissionPreset` to a writable preset.
   The plugin never bypasses the sandbox or approval policy.
@@ -160,6 +193,12 @@ Read these before relying on the plugin in production.
   session's context. That sub-session shares the same checkout and the plugin
   does not detect concurrent edits to the same files; keep the two off each
   other's work.
+- **Model selection degrades by host capability (0.0.2).** Agent-level
+  selection leaves the deployment default alone; only the
+  `sessionController.selectModel` fallback rewrites it (the notes say so). A
+  host with no model directory cannot pre-check a route and says so in the
+  notes; a host with no selection capability at all refuses a publish that
+  names a model instead of silently running the default.
 - **Older DSH versions degrade.** On 0.2.1 and earlier there is no live
   `running` state, so the quest list cannot show that a contractor is
   executing. On 0.2.1 and earlier the assistant always sees the quest
@@ -169,7 +208,7 @@ Read these before relying on the plugin in production.
 - **0.1.2-rc.1 itself is unusable for publishing quests.** That release fails to
   mount the `standard` preset when creating a session; this is a host bug, not a
   plugin bug. Use 0.1.5-rc.1 or newer.
-- **Size caps apply.** Requirements are capped by `maxTaskChars`; summaries by
+- **Size caps apply.** Requirements are capped by `maxQuestChars`; summaries by
   `summaryChars`. A summary over the cap is truncated.
 
 See [docs/limitations.md](docs/limitations.md) for the version-by-version
@@ -198,6 +237,13 @@ dsh plugin --profile <name> add /path/to/dsh-session-guild/0.0.x
 
 Enable it for the profile. The workspace registry and session services are
 provided by the Harness; no separate configuration is required.
+
+This checkout is version `0.0.2` and is still **internal testing: it is not
+published to npm**, so link the directory as above instead of installing from a
+registry. Older `0.0.1` installations keep working without the new arguments; a
+client that passes `provider`/`model`, relies on follow-up rounds, or expects
+the byte-budgeted quest title needs `0.0.2` or newer. See the
+[compatibility notes](COMPATIBILITY.md) for the exact version boundary.
 
 ## Development
 

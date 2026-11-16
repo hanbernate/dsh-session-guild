@@ -17,10 +17,12 @@
 
 ## 选择与挂载
 
-- `detectCapabilities(ctx)` 探测 `sessionController.create/prompt/state`、
-  `permissionPresets.catalog/optionOf`、`workingDirectory.get`、
-  `workspaceRegistry.unarchiveSession`，以及 `tools.resolve/executable`
-  （`ToolRegistrationOptions.when` 的运行时信号）。
+- `detectCapabilities(ctx)` 探测 `sessionController.create/prompt/state/
+  modelCatalog/selectModel`、`permissionPresets.catalog/optionOf`、
+  `workingDirectory.get`、`workspaceRegistry.unarchiveSession`，以及
+  `tools.resolve/executable`（`ToolRegistrationOptions.when` 的运行时信号）。
+  Agent 级的 `agents.get(sessionId).model.select` 按会话单独探测（见
+  `lib/models.js`），不进入适配器选择。
 - `guild_list_workspaces` 在所有宿主上都于 apply 时注册。
 - `permissionPresets` 是插件级 `inject` 的硬依赖；另外六个工具再等待
   `ctx.inject(['sessionController', 'workspaceRegistry'])` 后注册。此时才读取
@@ -57,6 +59,13 @@
   唤醒原会话但让它留在归档列表里。`guild_append` 会解释同样的降级，而不是
   承诺能恢复。
 - **0.1.2 – 0.1.5：** 没有归档事件，归档委托人会话不会级联。
+- **模型选择按能力降级（0.0.2 起）：** 优先 Agent 级
+  `agents.get(sessionId).model.select`，只影响该会话；没有它时退回
+  `sessionController.selectModel`，该调用会把新模型同时保存为部署默认模型，
+  结果 `notes` 里会写明；两者都没有时，带模型的发布在投递前失败，不会静默跑
+  默认模型。可用性预检优先用 `sessionController.modelCatalog()`，没有时用
+  `llm.resolveCallConfig()`；两者都没有则记 `note` 后继续（无法预检）。
+  这些能力是运行时探测的，未纳入下表的版本首次出现统计（实测矩阵基于 0.0.1）。
 - **< 0.1.2：** 只注册工作区发现；插件会告警。
 
 ## 已知宿主问题

@@ -10,10 +10,12 @@ README 汇总了用户在生产环境依赖本插件前必须知道的限制；�
 - 受托会话做完了但没有回报，委托会一直是 `in_progress`。
 - 投递失败会把 cache 记录置为 `failed`；重启后失败记录不会重建。受托会话执行过程
   中的报错不会反映到委托状态，需要受托会话自己回报。
-- 已完成的委托不能接受第二次回报。追加指令会唤醒受托会话，但不会重开委托；下一个
-  需要追踪的结果要新开一条委托。
+- **一轮只能回报一次。** 同一轮重复回报被拒绝。`guild_append` 在 `in_progress` 时只
+  steering（不新开任务、轮次不变）；在 `completed` 时开下一轮并登记新的回报任务，所以
+  下一个需要追踪的结果可以追加在同一会话里。`cancelled` / `failed` 的委托不能追加，
+  需要新开一条委托。
 - 委托状态来自 Session log 的派生消息，进程内 cache 可重建。重启后没有东西会自动续跑；
-  被 compaction 遮蔽的旧委托，以及旧包 0.0.2 之前写下的旧记录，无法重建。
+  被 compaction 遮蔽的旧委托，以及改名前的 `dsh-workspace-guild@0.0.2` 之前写下的旧记录，无法重建。
 
 ## 回报载体
 
@@ -29,6 +31,20 @@ README 汇总了用户在生产环境依赖本插件前必须知道的限制；�
   缺失时 `auto` 退回旧的消息投递，`job` 会让发布失败。
 - `reportDelivery: "prompt"` 保留旧行为：摘要是用户消息（`kind: 'user'`），除了
   `[guild report ...]` 标记外和用户自己输入的消息没有区别。
+
+## 模型选择
+
+- `guild_publish_quest` 的 `provider` / `model` / `reasoning_effort` 只作用于受托会话：
+  优先 `agents.get(sessionId).model.select`，不改部署默认模型。
+- 宿主没有 Agent 级选择时才退回 `sessionController.selectModel`；该调用会把新模型
+  同时保存为部署默认模型，`notes` 里会写明。部署若不允许改默认模型，请不要在只支持
+  这条路径的宿主上使用模型参数。
+- 投递前会用 `sessionController.modelCatalog()`（或 `llm.resolveCallConfig`）确认路由
+  可用；两者都没有的宿主无法预检，会记录"无法确认可用性"的 `note` 后继续。
+- 宿主既没有 `model.select` 也没有 `selectModel` 时，带模型的发布**直接失败**（错误带
+  session id，需求不投递），不会静默跑默认模型。
+- `reasoning_effort` 必须在该模型广告的 effort 列表里；模型不广告 reasoning 时不能
+  指定 effort。
 
 ## 消息与可见性
 
@@ -80,9 +96,9 @@ README 汇总了用户在生产环境依赖本插件前必须知道的限制；�
 - 需求受 `maxQuestChars` 限制（默认 20000）；摘要按 `summaryChars` 截断
   （默认 4000）。
 - 需求留在受托会话日志里；摘要在 job 投递下留在受托会话的 `guild_report` 工具结果
-  里（prompt 投递下留在委托人会话的日志里）；委托元数据与 `jobId` 来自
-  `guild_publish_quest` 结果里的结构化 `guild.quest` 块（经派生消息读取）。插件没有
-  私有持久化文件。
+  里（prompt 投递下留在委托人会话的日志里）；委托元数据、`round`、`jobId` 与
+  `selection` 来自 `guild_publish_quest` / `guild_append` 结果里的结构化
+  `guild.quest` 块（经派生消息读取）。插件没有私有持久化文件。
 - 插件不追加自定义 Session 事件。未标记的事件类型会让会话在重启后拒绝加载。
 - 插件没有网络请求，只用 Node 内置模块。
 - 禁用插件不会删除受托会话或委托记录。受托会话是普通会话，会保留自己的状态；但
@@ -93,4 +109,5 @@ README 汇总了用户在生产环境依赖本插件前必须知道的限制；�
 - 同工作区委托会开出与调用方并列的子会话，共用同一份 checkout：两边的修改互相可见，
   插件不做文件级冲突检测，并发改同一批文件时会互相覆盖。
 - 只有已注册工作区可以作为目标；未知名字会报错并列出可用工作区。
-- 一条记录对应一次委托。多个独立任务请创建多条委托；它们可以并发执行。
+- 一条记录对应一次委托，可以有多轮（`round`）。多个独立任务请创建多条委托；它们可以
+  并发执行。

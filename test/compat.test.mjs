@@ -32,6 +32,8 @@ const CONTROLLER = {
   create: async () => ({ sessionId: 'S' }),
   prompt: async () => ({ accepted: true }),
   state: async () => ({ running: true, active: true }),
+  modelCatalog: async () => ({ default: {}, routableProviders: [], groups: [], failures: [] }),
+  selectModel: async () => ({ selected: {} }),
 }
 
 const PRESETS = {
@@ -84,6 +86,8 @@ function fakeCtx(overrides = {}) {
 const capabilities = overrides => ({
   sessionController: true,
   controllerState: true,
+  modelCatalog: true,
+  selectModel: true,
   presetCatalog: true,
   presetNames: true,
   workingDirectory: true,
@@ -104,6 +108,8 @@ test('detectCapabilities probes services and the tools API, not a version string
   }))
   assert.deepEqual(legacy, capabilities({
     controllerState: false,
+    modelCatalog: false,
+    selectModel: false,
     presetCatalog: false,
     workingDirectory: false,
     unarchive: false,

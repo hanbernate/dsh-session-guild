@@ -25,6 +25,10 @@ Like an adventurers' guild: you publish a quest, the plugin opens a normal
 session; the contractor owns the execution plan and decides how to proceed, and
 the result is reported back to the client session.
 
+For unattended work that needs no human involvement, use a standard subagent
+instead: a quest opens a sub-session the user is meant to step into, so by
+default it does not order an automatic report.
+
 ## Two scenarios
 
 ### 1. The work belongs to another workspace
@@ -176,7 +180,10 @@ Read these before relying on the plugin in production.
   in progress an append only steers. After a report, an append reopens the
   quest for round N+1 with a fresh report job, so the contractor can report
   once more; a repeated report for the same round is refused. A cancelled or
-  failed quest cannot be appended — publish a new quest instead.
+  failed quest cannot be appended — publish a new quest instead. By default
+  the contractor shows an active user the summary before reporting; an
+  explicit quest instruction not to pause wins, and with no active user the
+  guidance does not apply.
 - **Contractors start read-only.** You must grant write access in the
   contractor session, or set `defaultPermissionPreset` to a writable preset.
   The plugin never bypasses the sandbox or approval policy.

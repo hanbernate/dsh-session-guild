@@ -12,7 +12,7 @@
 | `guild_list_quests` | 委托人 | Session 服务就绪后 | 查看委托状态与受托会话实时观测 |
 | `guild_collect` | 委托人 | Session 服务就绪后 | 不等待地读取委托回报（含重启后补读） |
 | `guild_append` | 委托人 | Session 服务就绪后 | 投递追加指令；已完成时开下一轮并登记新的回报任务 |
-| `guild_resume` | 委托人 | Session 服务就绪后 | 用户要求后恢复/唤醒未完成的受托会话 |
+| `guild_resume` | 委托人 | Session 服务就绪后 | 用户要求后恢复/唤醒受托会话（显式指定 questIds 时含已结委托，供追加） |
 | `guild_report` | 被委托人 | Session 服务就绪后 | 回报本轮摘要：结算该轮的后台任务，并把该轮置为 completed |
 
 `guild_list_workspaces` 是唯一在 Session 服务挂载前就可用的工具；0.1.2 之前的宿主
@@ -73,7 +73,9 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
   服务就用一个归属于调用方会话的后台任务（`guild-quest`），否则退回消息投递；
   `job` 强制后台任务（宿主不支持时发布失败），`prompt` 强制旧的消息投递。
 - 工具结果带 `jobId`：结果就绪后由 `job_output` 读取，`guild_report` 不会往委托人
-  会话投递用户消息，也不会因为等待委托而占用委托人会话的 turn。
+  会话投递用户消息，也不会因为等待委托而占用委托人会话的 turn。回报对插件代码的
+  HMR 热重载免疫（结算句柄跨实例存活）；万一 completed 的委托其任务从未结算，
+  `guild_collect` 会点名该任务并给出释放名额的 `job_kill` 动作。
 - 模型选择（可选）：
   - `provider` 与 `model` 必须同时给出或同时省略；`reasoning_effort` 需要两者。
     只给一半会在创建会话之前失败，避免静默退回部署默认模型。
@@ -119,7 +121,9 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
 
 - 输入：`sessionId`（必填）、`message`（必填）。
 - 只有该委托的委托人会话可以发送。
-- 受托会话已归档时拒绝，并提示改用 `guild_resume`。
+- 受托会话已归档时拒绝，错误信息给出可执行路径：
+  `call guild_resume with questIds ["<questId>"] to restore it, then append again`
+  （0.1.5 等没有 `unarchiveSession` 的宿主会另外说明该路径不通，只能原地唤醒）。
 - `approveAppend: true` 时，投递前先请求审批。
 - 追加消息作为用户消息投递，并在受托会话里开始一轮。
 - `in_progress`：只投递（steering），不新开任务、轮次不变；受托会话这一轮的回报照旧
@@ -133,14 +137,19 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
 
 ## `guild_resume`
 
-- 输入：可选的 `questIds`；省略表示所有未完成委托。
-- 只处理 `status: in_progress` 的记录。
+- 输入：可选的 `questIds`；省略表示所有**未完成**（`in_progress`）委托。
+- 显式给出 `questIds` 时，`completed` 的委托也接受：只做归档恢复与唤醒（唤醒消息
+  注明「等待 `guild_append` 追加下一轮、不要主动回报」），**不改状态、不开轮次、
+  不登记回报任务**——轮次与回报任务仍由随后的 `guild_append` 决定。省略 `questIds`
+  永远不碰 `completed` 的委托，行为与旧版一致。这条路径解决了
+  「append 要求先 resume、resume 只认未结轮次、未结轮次只能由 append 打开」的循环依赖。
 - 受托会话已归档且宿主支持时，用 `workspaceRegistry.unarchiveSession` 恢复原会话，
   再投递“继续”消息。绝不会新建会话。
 - 0.1.5 没有 `unarchiveSession`：适配器原地唤醒受托会话，并在结果里注明它仍在
   归档列表中。
 - 已在执行的受托会话会被跳过，避免重复投递。
-- 成功唤醒会更新 `resumedAt` 并递增 `resumeCount`。
+- 成功唤醒会更新 `resumedAt` 并递增 `resumeCount`（`completed` 记录同样只追加这两个
+  元数据字段，状态保持 `completed`）。
 
 ## `guild_report`
 
@@ -156,8 +165,11 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
   （`JobOutcome.result`），并把记录置为 `completed`。`job_output` 会一次性交出该
   结果；正在 `job_output(wait)` 上的等待者会让 Host 跳过完成通知。整个过程不产生
   `user/message`，委托人会话不会因为等待而处于 running。
-- 接收任务已不存在（重启、owner 释放、任务被终止）时，只记录状态与摘要，不投递
-  消息；委托人之后用 `guild_collect` 读取。旧的 `prompt` 委托保持原来的消息投递。
+- 接收任务找不到结算句柄时只记录状态与摘要，不投递消息；委托人之后用
+  `guild_collect` 读取。工具结果会带一条 `note` 区分两种情况：任务仍 `running`
+  只是句柄丢了（插件热重载会重建实例；名额仍被占用，委托方可 `job_kill` 释放），
+  或任务已不存在/已终止（重启、owner 释放、被终止）。工具描述要求受托会话把这类
+  警告一并写进摘要，委托方从回执里就能看到。旧的 `prompt` 委托保持原来的消息投递。
 - 回报文本（仅 `prompt` 模式）是纯文本，刻意避免 Host 的 `dsh-session:` 引用形式：
   裸 id 会让接收 turn 解析失败，而规范化 URI 会让受托会话的 surface 被反复注入
   委托人会话的后续 turn。
@@ -174,6 +186,9 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
   `completed`，而是返回说明性 `note`。
 - 摘要来源按顺序：内存 cache（`guild_report` 写入）→ live 受托会话的派生消息 →
   冷读受托会话的历史页（`sessionController.events`，找 `guild.report` 块）。
+- 记录已 `completed` 但本轮回报任务仍处 `running`（结算句柄因热重载丢失的僵尸任务）
+  时，`note` 会点名该任务并给出清理动作：`job_kill` 释放名额——它只结算任务本身，
+  不会改动这条已完成的委托记录。
 - 解释性 `note` 会说明受托会话未加载、历史读取失败等无法确认的情况。
 
 ## 注册细节

@@ -116,6 +116,10 @@ Since 0.0.2 a quest can name the model the contractor must use:
   registered first, the quest is reopened, and only then is the message
   delivered. The next `guild_report` sends that round's summary to the new
   job, so `job_output` returns the new answer.
+- An archived contractor refuses the append with the executable path: resume it
+  first with `guild_resume` naming the quest's `questIds` (a `completed` quest
+  is restored that way too — restore and wake only, no status change), then
+  append again.
 - One report per round; `cancelled`/`failed` quests cannot be appended.
 
 The motivating use: a main session delegates a code review to a read-only
@@ -130,7 +134,9 @@ contractor being idle, waiting for permission, interrupted, or archived does
 
 Nothing resumes automatically after a DSH restart. When you want to continue,
 ask your assistant to resume the open quests; archived contractors are
-restored from the archive rather than recreated.
+restored from the archive rather than recreated. The archived contractor of a
+`completed` quest can be restored the same way when you name its quest id —
+the restore only prepares the next `guild_append` and never reopens the round.
 
 ## Configuration
 
@@ -171,6 +177,11 @@ Read these before relying on the plugin in production.
   session, counts against that session's background-job limit, and keeps the
   session from being archived until it settles. Hosts without the `jobs`
   service fall back to the old message delivery (configure `reportDelivery`).
+  Reloading the plugin's code (HMR) does not break settlement: the settlement
+  handle outlives plugin instances. If you ever see a `completed` quest whose
+  job is still `running` (a zombie from before that fix, or a replaced jobs
+  service), `guild_collect`'s `note` names the job and `job_kill` frees the
+  slot — it cannot alter the completed quest record.
 - **A quest completes only when the contractor reports.** If the
   contractor finishes but does not report, the quest stays in progress;
   neither idleness nor archiving changes it.

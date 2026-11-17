@@ -38,7 +38,11 @@ function makeJobs() {
     start(spec) {
       const id = `guild-quest-${++seq}`
       const hooks = spec.run({ id, append() {}, updateProgress() {} })
-      records.set(id, { id, spec, hooks })
+      const record = { id, spec, hooks, status: 'running' }
+      // Mirror the registry's terminal projection: the view's status flips
+      // when the producer's done promise settles.
+      hooks.done.then(outcome => { record.status = outcome.status }, () => { record.status = 'failed' })
+      records.set(id, record)
       return id
     },
     get(id) {
@@ -53,7 +57,7 @@ function makeJobs() {
   }
 }
 
-function makeCtx(services) {
+function makeCtx(services, root) {
   const tools = new Map()
   const cleanups = []
   const ctx = {
@@ -77,6 +81,10 @@ function makeCtx(services) {
     },
     logger: { info() {}, warn() {} },
   }
+  // The app-lifetime scope the receiver registry lives on. A real host
+  // inherits it from the cordis root context; the fixture hands the same
+  // object to every instance so a reload can be simulated by applying again.
+  ctx.root = root ?? ctx
   return { ctx, tools }
 }
 
@@ -301,4 +309,77 @@ test('reportDelivery: job refuses to publish without a jobs service', async () =
     /no background job could carry its report/,
   )
   assert.equal(f.prompts.length, 0)
+})
+
+/* ----------------------- instance reload (HMR) ----------------------- */
+
+test('an HMR reload keeps the settlement path: the new instance settles the job its predecessor registered', async () => {
+  const f = fixture()
+  const published = await f.tools.get('guild_publish_quest').execute(publishArgs, f.clientExec())
+  const delivered = f.prompts.at(-1)
+
+  // Both sides of the conversation are durable Session messages; a fresh
+  // instance rebuilds its cache from exactly these, as after a real reload.
+  f.contractor.deriveMessages = () => [{ role: 'user', content: delivered.content }]
+  f.client.deriveMessages = () => [{ role: 'tool', toolCallId: 'call-1', content: delivered.content }]
+
+  // The reload: the Loader re-applies the entry over the same host services
+  // (same job registry) and the same root context — new instance, new
+  // in-memory cache, and (before the fix) a new empty receiver map.
+  const reloaded = makeCtx(f.services, f.ctx.root)
+  apply(reloaded.ctx, {})
+
+  const reported = await reloaded.tools.get('guild_report').execute({ summary: '热重载后的回报' }, f.contractorExec())
+  assert.equal(reported.settled, true, 'the receiver registered before the reload still settles')
+  assert.equal(reported.delivered, true)
+  assert.equal(reported.jobId, published.jobId)
+  assert.equal(reported.note, undefined, 'a settled report needs no degradation note')
+  assert.deepEqual(await f.services.jobs.settled(published.jobId), {
+    status: 'completed',
+    result: '热重载后的回报',
+    detail: 'reported by S2',
+  })
+
+  const collected = await reloaded.tools.get('guild_collect').execute({ questId: published.questId }, f.clientExec())
+  assert.equal(collected.quests[0].status, 'completed')
+  assert.equal(collected.quests[0].summary, '热重载后的回报')
+  assert.equal(collected.quests[0].note, undefined, 'a settled job needs no cleanup note')
+})
+
+test('a report whose settlement handle was lost is flagged by guild_collect with the cleanup action', async () => {
+  const f = fixture()
+  const published = await f.tools.get('guild_publish_quest').execute(publishArgs, f.clientExec())
+  const delivered = f.prompts.at(-1)
+
+  // The contractor's Session log: the delivered quest block now, the
+  // guild_report result once the report has executed (a cold rebuild reads
+  // exactly these two).
+  const log = [{ role: 'user', content: delivered.content }]
+  f.contractor.deriveMessages = () => [...log]
+
+  // A receiver registered on a different root models the pre-fix loss: the
+  // report finds no handle, the job keeps running, and no notice ever fires.
+  const stray = makeCtx(f.services, {})
+  apply(stray.ctx, {})
+  const reported = await stray.tools.get('guild_report').execute({ summary: '句柄丢失的回报' }, f.contractorExec())
+  assert.equal(reported.settled, false)
+  assert.equal(reported.delivered, false)
+  assert.match(reported.note, /仍在运行/)
+  assert.match(reported.note, /job_kill/)
+  assert.equal(f.services.jobs.get(published.jobId).status, 'running', 'the job keeps its slot')
+
+  log.push({
+    role: 'tool',
+    toolCallId: 'call-2',
+    content: [{ type: 'text', text: JSON.stringify({ kind: 'guild.report', questId: published.questId, round: 1, summary: '句柄丢失的回报' }) }],
+  })
+
+  // The client's pull path carries the signal the notice never delivered:
+  // completed record + still-running job + the action that frees the slot
+  // without touching the completed record.
+  const collected = await f.tools.get('guild_collect').execute({}, f.clientExec())
+  assert.equal(collected.quests[0].status, 'completed')
+  assert.equal(collected.quests[0].summary, '句柄丢失的回报')
+  assert.match(collected.quests[0].note, new RegExp(published.jobId))
+  assert.match(collected.quests[0].note, /job_kill/)
 })

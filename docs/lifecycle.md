@@ -59,9 +59,13 @@ publish 立即返回，turn 正常结束；结果就绪时 Host 投递一条 not
 唤醒会话，模型用 `job_output` 读到工具结果。若模型当时正 `job_output(wait)`，
 Host 会跳过 notice，结果由那次工具调用返回。
 
-接收任务不存在时（重启、owner 释放、被终止），第一步退化为"只记录"：状态与摘要
-写进 cache 和受托会话工具结果里的 `guild.report` 块，不推送任何消息；委托方之后用
-`guild_collect` 读取（live 会话走派生消息，冷会话走历史页）。
+接收任务找不到结算句柄时（重启、owner 释放、被终止、或热重载前的版本留下的丢失
+句柄），第一步退化为"只记录"：状态与摘要写进 cache 和受托会话工具结果里的
+`guild.report` 块，不推送任何消息；委托方之后用 `guild_collect` 读取（live 会话走
+派生消息，冷会话走历史页）。工具结果的 `note` 会区分「任务仍在运行、只是句柄丢了」
+（名额仍被占用，可 `job_kill` 释放）与「任务已不存在/已终止」。插件代码的 HMR
+热重载不会走到这一步：结算句柄存放在应用根上下文上，跨插件实例存活，重载后的
+新实例照样结算重载前登记的任务。
 
 `reportDelivery: "prompt"` 保留旧行为：摘要作为 queue 模式的用户消息投递到委托人
 会话，请求身份是 `report:<questId>`（第 1 轮）或 `report:<questId>:r<n>`（第 n 轮），
@@ -104,6 +108,11 @@ cache 重建时用它和 `guild.report` 块（含 `round`）按轮次判定 `com
 - **受托会话被归档。** `guild_resume` 用 `unarchiveSession` 恢复原会话并唤醒，
   绝不新建替代会话。0.1.5 没有取消归档的 API：受托会话原地唤醒，但仍留在归档
   列表里。
+- **已结委托的受托会话被归档。** `guild_append` 会拒绝并给出可执行路径：
+  `guild_resume` 带上该委托的 `questIds` 可以恢复它——`completed` 的记录只有被
+  显式点名时才会被 resume，且只做恢复与唤醒（唤醒消息注明等待下一轮追加），状态、
+  轮次与回报任务都不变；随后的 `guild_append` 才开第 N+1 轮。省略 `questIds` 的
+  resume 行为不变，只处理 `in_progress`。
 - **受托会话已在执行。** `guild_resume` 跳过它，而不是排队重复的继续消息。
 - **工具调用未执行。** Host 报 `ABORTED_BEFORE_DISPATCH`，没有副作用。
 

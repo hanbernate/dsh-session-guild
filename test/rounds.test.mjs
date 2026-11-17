@@ -104,6 +104,7 @@ function fixture({ promptDeliveryFailure = false, config = {} } = {}) {
   const sessions = new Map([['S1', client], ['S2', contractor]])
   const prompts = []
   const cleanups = []
+  const archived = []
   let failNextPrompt = promptDeliveryFailure
 
   const controller = {
@@ -130,9 +131,15 @@ function fixture({ promptDeliveryFailure = false, config = {} } = {}) {
         { id: 'w-b', title: 'beta', path: '/ws/b' },
       ],
       get archivedSessionIds() {
-        return []
+        return archived
       },
-      archiveSession() {},
+      archiveSession(id) {
+        if (!archived.includes(id)) archived.push(id)
+      },
+      unarchiveSession(id) {
+        const index = archived.indexOf(id)
+        if (index >= 0) archived.splice(index, 1)
+      },
     },
     sessionController: controller,
     sessions: { get: id => sessions.get(id) },
@@ -158,7 +165,7 @@ function fixture({ promptDeliveryFailure = false, config = {} } = {}) {
   apply(built.ctx, config)
   const clientExec = () => ({ agent: { id: 'S1', session: client }, signal: new AbortController().signal, callId: 'call-1', rootCallId: 'call-1' })
   const contractorExec = () => ({ agent: { id: 'S2', session: contractor }, signal: new AbortController().signal, callId: 'call-2' })
-  return { ...built, services, client, contractor, prompts, clientExec, contractorExec }
+  return { ...built, services, client, contractor, prompts, archived, clientExec, contractorExec }
 }
 
 const publishArgs = { workspace: 'beta', quest: '评审 diff' }
@@ -352,6 +359,104 @@ test('G3: reportDelivery prompt keeps one message per round with a per-round req
   assert.equal(collected.quests[0].status, 'completed')
   assert.equal(collected.quests[0].round, 2)
   assert.equal(collected.quests[0].summary, '第二轮')
+})
+
+/* ------------------- archived completed quests (G6) ------------------- */
+
+test('G6: an archived contractor of a completed quest can resume → append round 2', async () => {
+  const f = fixture()
+  const published = await f.tools.get('guild_publish_quest').execute(publishArgs, f.clientExec())
+  await f.tools.get('guild_report').execute({ summary: '第一轮结论' }, f.contractorExec())
+  f.archived.push('S2')
+
+  // The refusal names the executable path: resume with this quest's id.
+  await assert.rejects(
+    () => f.tools.get('guild_append').execute({ sessionId: 'S2', message: '补一下边界' }, f.clientExec()),
+    error => error.message.includes(`guild_resume with questIds ["${published.questId}"]`),
+  )
+  assert.equal(
+    (await f.tools.get('guild_list_quests').execute({}, f.clientExec())).quests[0].status,
+    'completed',
+    'the refusal changes nothing',
+  )
+
+  // Resume accepts the explicitly named completed quest: restore + wake only —
+  // no status change, no report job, the original session restored in place.
+  const resumed = await f.tools.get('guild_resume').execute({ questIds: [published.questId] }, f.clientExec())
+  assert.equal(resumed.resumed.length, 1)
+  assert.equal(resumed.resumed[0].restored, true)
+  assert.equal(resumed.resumed[0].delivered, true)
+  assert.deepEqual(f.archived, [], 'the original session is restored, not replaced')
+  const wake = f.prompts.at(-1)
+  assert.equal(wake.sessionId, 'S2')
+  assert.match(wake.content[0].text, /guild_append/, 'the wake says what the session is waiting for')
+  assert.doesNotMatch(wake.content[0].text, /guild_report 汇报/, 'a settled round must not invite another report')
+  assert.equal(
+    (await f.tools.get('guild_list_quests').execute({}, f.clientExec())).quests[0].status,
+    'completed',
+    'resume must not reopen the round or downgrade the record',
+  )
+
+  // The append that was deadlocked now opens round 2 with its own job.
+  const appended = await f.tools.get('guild_append').execute({ sessionId: 'S2', message: '补一下边界' }, f.clientExec())
+  assert.equal(appended.round, 2)
+  assert.match(appended.jobId, /^guild-quest-/)
+  const second = await f.tools.get('guild_report').execute({ summary: '第二轮结论' }, f.contractorExec())
+  assert.equal(second.settled, true)
+  assert.deepEqual(await f.services.jobs.settled(appended.jobId), {
+    status: 'completed',
+    result: '第二轮结论',
+    detail: 'reported by S2',
+  })
+
+  // Cold rebuild: resume wrote no quest/report block, so the same blocks
+  // still fold to completed round 1 on their own (metadata stays metadata).
+  const cache = createQuestCache()
+  await cache.ensureClient({
+    id: 'S1',
+    inheritedEventCount: 0,
+    deriveMessages: () => [
+      { role: 'tool', toolCallId: 'c1', content: [blockOf(questBlock({ questId: published.questId, round: 1, jobId: 'j1' }))] },
+      { role: 'tool', toolCallId: 'c2', content: [blockOf(reportBlock({ questId: published.questId, round: 1, summary: '第一轮结论' }))] },
+    ],
+  })
+  assert.equal(cache.get(published.questId).status, 'completed')
+  assert.equal(cache.get(published.questId).round, 1)
+  assert.equal(cache.get(published.questId).summary, '第一轮结论')
+})
+
+test('G6: resume without questIds still skips completed quests', async () => {
+  const f = fixture()
+  const published = await f.tools.get('guild_publish_quest').execute(publishArgs, f.clientExec())
+  await f.tools.get('guild_report').execute({ summary: '第一轮结论' }, f.contractorExec())
+  f.archived.push('S2')
+
+  const resumed = await f.tools.get('guild_resume').execute({}, f.clientExec())
+  assert.equal(resumed.resumed.length, 0, 'an implicit resume only touches open quests')
+  assert.deepEqual(f.archived, ['S2'], 'the archived contractor stays archived')
+  assert.equal(
+    (await f.tools.get('guild_list_quests').execute({}, f.clientExec())).quests[0].status,
+    'completed',
+  )
+})
+
+test('G6: an explicit resume of an open quest keeps its original wake message', async () => {
+  const f = fixture()
+  const published = await f.tools.get('guild_publish_quest').execute(publishArgs, f.clientExec())
+  f.archived.push('S2')
+
+  const resumed = await f.tools.get('guild_resume').execute({ questIds: [published.questId] }, f.clientExec())
+  assert.equal(resumed.resumed.length, 1)
+  assert.equal(resumed.resumed[0].restored, true)
+  assert.equal(resumed.resumed[0].delivered, true)
+  assert.equal(resumed.resumed[0].note, undefined, 'the open-quest path carries no completion note')
+  const wake = f.prompts.at(-1)
+  assert.match(wake.content[0].text, /guild_report/)
+  assert.doesNotMatch(wake.content[0].text, /guild_append/)
+  assert.equal(
+    (await f.tools.get('guild_list_quests').execute({}, f.clientExec())).quests[0].status,
+    'in_progress',
+  )
 })
 
 /* ----------------------------- cold rebuild (G5) ----------------------------- */

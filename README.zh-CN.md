@@ -249,7 +249,8 @@ npm run check
 3. CI 校验标签与 `package.json` 一致、跑测试，然后发布。
 
 npm dist-tag 默认 `beta`，所以打标签不会顶掉 `latest`；正式版发布前把仓库变量
-`NPM_DIST_TAG` 设成 `latest`。发布需要仓库 secret `NPM_TOKEN`：一个对本包有读写权限、
+`NPM_DIST_TAG` 设成 `latest`。例外：全新包走 npm 的 staged publishing 时，首个通过
+审核的版本会被同时提升到 `latest`，所以首次发布会同时出现在两个 tag 上。发布需要仓库 secret `NPM_TOKEN`：一个对本包有读写权限、
 开启 2FA bypass 的 granular access token（或 Automation token）。工作流同时生成 npm
 provenance，发布版本会链接回本仓库和提交。
 

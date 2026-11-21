@@ -309,6 +309,9 @@ Pushing a `v*` tag publishes the package through GitHub Actions
 
 The npm dist-tag defaults to `beta`, so a tagged beta cannot replace `latest`.
 Set the repository variable `NPM_DIST_TAG=latest` before a stable release.
+Exception: npm's staged publishing for a brand-new package promotes the first
+reviewed version to `latest` as well, so the very first release may appear on
+both tags.
 Publishing needs an `NPM_TOKEN` repository secret: a granular access token with
 read/write access to this package and 2FA bypass enabled (or an Automation
 token). The workflow also generates npm provenance, so the published version

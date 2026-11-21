@@ -1,21 +1,23 @@
 # dsh-session-guild × DSH rc 兼容性与适配器
 
-测试对象：`dsh-session-guild 0.0.1`（`0.0.x` 分支；0.0.2 未重跑本矩阵）
+测试对象：`dsh-session-guild 0.0.1`（`0.0.x` 分支；下表完整矩阵实测对象）与 `0.0.2`（2026-11-19 在 `0.2.2-rc.5` 上复核；公测版，npm `beta` 标签）
 
 > 版本说明：本包由 `dsh-workspace-guild` 改名而来，版本从 `0.0.1` 重新起算；文中「旧包 0.0.2」指改名前的 `dsh-workspace-guild@0.0.2`（与本包 `0.0.2` 不是同一版本号）及其写下的会话数据。
 >
-> **0.0.2 新增能力（未重跑本矩阵）：** 发布时选模型（`provider` / `model` / `reasoning_effort`）、
-> `guild_append` 追加轮次，以及按字节预算的委托标题（`title` / `titleMaxBytes`）。这三项都
-> 不改变既有适配器选择与降级路径；模型能力（`agents.get(...).model.select`、
+> **0.0.2 新增能力（公测）：** 发布时选模型（`provider` / `model` / `reasoning_effort`）、
+> `guild_append` 追加轮次、按字节预算的委托标题（`title` / `titleMaxBytes`），以及回报模式
+> `mode`（`review` 默认人在环 / `unattended` 无人值守）。这几项都不改变既有适配器选择与降级路径；模型能力（`agents.get(...).model.select`、
 > `sessionController.modelCatalog` / `selectModel`、`llm.resolveCallConfig`）见
 > [`docs/compatibility.md`](docs/compatibility.md) 与 [`docs/limitations.md`](docs/limitations.md)。
-> 下表的宿主兼容结论来自 0.0.1 实测，0.0.2 的委托/回报/归档链路未改变。
-测试日期：2026-11-15
+> 下表的宿主兼容结论来自 0.0.1 实测，0.0.2 的委托/回报/归档链路未改变；0.0.2 已于 2026-11-19
+> 在 `0.2.2-rc.5` 上复核：rc.3→rc.5 插件调用面契约零变化、隔离实例装载与工具注册正常；发布版套件
+> 73/73（2026-11-21 本地 `node --test`，比复核时新增回报模式用例）。
+测试日期：2026-11-15（完整矩阵）；复核日期：2026-11-19（`0.2.2-rc.5`，0.0.2）
 测试环境：npm 发布的各 DSH rc 包，每个版本使用独立 `DSH_HOME`、私有 store 与非 3080 端口。生产 checkout 与 3080 服务全程未触碰；一次性产物不属于本仓库。
 
 ## 结论
 
-- **0.2.2-rc.1+**：完整兼容。委托 → 回报 → 归档 → 找回 → 级联全部通过，含 `sessionController.state`、`tools.when`、`workspace/session-archived`。
+- **0.2.2-rc.1+（含 0.2.2-rc.5）**：完整兼容。委托 → 回报 → 归档 → 找回 → 级联全部通过，含 `sessionController.state`、`tools.when`、`workspace/session-archived`。`0.2.2-rc.5` 已用 0.0.2 复核：契约面与 rc.3 相同，仍选中 `latest` 适配器。
 - **0.1.7-rc.1 – 0.2.1**：完整委托链路通过。降级项：没有 `sessionController.state`（`running` 恒为 false）、没有 `tools.when`（七个 Session 相关工具常驻）、0.2.1 之前没有 `workingDirectory.get`（用会话头 cwd）。
 - **0.1.5-rc.1 – 0.1.5-rc.3**：委托 / 回报通过；`guild_resume` 会原地唤醒归档受托会话但无法取消归档（宿主没有 `unarchiveSession`）；没有归档事件，因此不级联。
 - **0.1.2-rc.1**：插件能安装、加载并注册 6 个工具，适配器选择 `v1`；但该版本自身在创建会话时 `agent-presets` 的 `standard` preset 挂载失败（`Cannot read properties of undefined (reading 'parent')`），委托无法完成，与本插件无关。
@@ -28,7 +30,7 @@
 
 | 适配器 | 范围 | `permissionPresets.catalog` | `workingDirectory.get` | `sessionController.state` | `unarchiveSession` | `tools.when` | 归档事件 |
 |---|---|---|---|---|---|---|---|
-| `latest` | 0.2.2-rc.1+ | ✅ | ✅ | ✅ | ✅ | ✅ | `session-archived` + `session-stop` |
+| `latest` | 0.2.2-rc.1+（rc.5 已复核） | ✅ | ✅ | ✅ | ✅ | ✅ | `session-archived` + `session-stop` |
 | `v2` | 0.1.7-rc.1 – 0.2.1 | ✅ | 0.2.1+ | — | ✅ | — | `session-stop` |
 | `v1` | 0.1.2-rc.1 – 0.1.5 | —（用 `names`/`optionOf` 合成） | —（会话头 cwd） | — | — | — | 无 |
 | `v0` | < 0.1.2 | — | — | — | — | — | 无（只发现工作区） |
@@ -56,6 +58,7 @@
 | 0.2.0-rc.2 | ✅ | 6/6 | ✅ | ✅ | ✅ | ✅ | 同上，cwd 用会话头 |
 | 0.2.1-rc.5 | ✅ | 6/6 | ✅ | ✅ | ✅ | ✅ | 有 `workingDirectory.get`，仍无 `state` |
 | 0.2.2-rc.3 | ✅ | 6/6 | ✅ | ✅ | ✅ | ✅ | 完整：`state` + `when` + 双归档事件 |
+| 0.2.2-rc.5 | ✅ | ✅（7 个工具由单测覆盖；宿主无 HTTP 工具列表接口） | 未重跑 | 未重跑 | 未重跑 | 未重跑 | 0.0.2 复核：rc.3→rc.5 插件调用面仅版本号变化，仍选 `latest`；rc.4/rc.5 只改 web-search 默认与 LiveShare 修复；发布版 73/73 单测 |
 
 ## 能力首次出现版本
 
@@ -101,7 +104,7 @@
 ```bash
 cd <repo>/0.0.x
 npm run check            # index.js、lib/、lib/tools/ 全部语法检查
-node --test              # 32 个用例：适配器选择、四代宿主行为、cache 结构化重建、job 投递
+node --test              # 73 个用例：适配器选择、四代宿主行为、cache 结构化重建、job 投递、回报模式
 node .script/smoke.mjs   # 端到端假宿主冒烟
 ```
 

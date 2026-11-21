@@ -1,6 +1,6 @@
 {
   "meta": {
-    "description": "Publish a quest to a fresh ordinary session: it works out the detailed plan itself, does the work in its own context, and reports a summary back to the session that delegated it.",
+    "description": "Publish a quest to a fresh ordinary session: it works out the detailed plan itself, does the work in its own context, and — after the user in that session confirms — reports a summary back to the session that delegated it.",
     "detail": "README.md"
   }
 }

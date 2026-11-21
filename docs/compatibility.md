@@ -7,7 +7,7 @@
 
 | 适配器 | DSH 范围 | 关键能力 | 行为 |
 |---|---|---|---|
-| `latest` | 0.2.2-rc.1+ | `sessionController.state`、`tools.when`、`workspace/session-archived`、`unarchiveSession` | 完整：按需可见、受托会话运行态、归档恢复、双归档事件级联 |
+| `latest` | 0.2.2-rc.1+（rc.5 已复核） | `sessionController.state`、`tools.when`、`workspace/session-archived`、`unarchiveSession` | 完整：按需可见、受托会话运行态、归档恢复、双归档事件级联 |
 | `v2` | 0.1.7-rc.1 – 0.2.1 | 无 `state`、无 `tools.when`；0.2.1 起有 `workingDirectory.get`；有 `unarchiveSession`；只有 `workspace/session-stop` | 七个 Session 相关工具常驻，`running` 恒为 false，完整生命周期，从 stop 级联 |
 | `v1` | 0.1.2-rc.1 – 0.1.5 | 无 `permissionPresets.catalog`、无 `workingDirectory.get`、无 `unarchiveSession`、无归档事件 | 权限目录由 `names`/`optionOf` 合成；cwd 用会话头；继续操作原地唤醒；不级联 |
 | `v0` | < 0.1.2 | 没有 `sessionController` | 只注册 `guild_list_workspaces` 并告警；不假装能委托 |

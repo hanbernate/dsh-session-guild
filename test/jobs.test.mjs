@@ -217,6 +217,35 @@ test('guild_report settles the job result instead of prompting the client', asyn
   )
 })
 
+test('quest and report lengths are model-decided: no plugin-side caps', async () => {
+  // Stale config keys from older profiles must no longer bound either side.
+  const f = fixture({ config: { maxQuestChars: 1, summaryChars: 1 } })
+  const longQuest = `修一下${'细'.repeat(25000)}`
+  const longSummary = `改好了${'报'.repeat(15000)}`
+
+  const published = await f.tools.get('guild_publish_quest').execute(
+    { ...publishArgs, quest: longQuest }, f.clientExec(),
+  )
+  assert.ok(published.jobId)
+  // The quest text is delivered whole; the plugin appends its reporting rule
+  // after it, so the requirement is no longer the tail of the message.
+  assert.equal(f.prompts[0].content[0].text.includes(longQuest), true, 'the full quest is delivered')
+  assert.equal(
+    f.services.jobs.get(published.jobId).spec.outputLimitBytes, undefined,
+    'the job keeps unbounded output; the host bounds what reaches the model',
+  )
+
+  const reported = await f.tools.get('guild_report').execute({ summary: longSummary }, f.contractorExec())
+  assert.equal(reported.settled, true)
+  assert.deepEqual(await f.services.jobs.settled(published.jobId), {
+    status: 'completed',
+    result: longSummary,
+    detail: 'reported by S2',
+  })
+  const collected = await f.tools.get('guild_collect').execute({ questId: published.questId }, f.clientExec())
+  assert.equal(collected.quests[0].summary, longSummary, 'the whole summary survives into the quest record')
+})
+
 test('a killed job stops the contractor and marks the quest cancelled', async () => {
   const f = fixture()
   const published = await f.tools.get('guild_publish_quest').execute(publishArgs, f.clientExec())
@@ -289,6 +318,18 @@ test('reportDelivery: prompt keeps the legacy user-message delivery', async () =
   assert.equal(f.prompts.length, 2)
   assert.equal(f.prompts[1].sessionId, 'S1')
   assert.equal(f.prompts[1].requestId, `report:${published.questId}`)
+})
+
+test('prompt delivery also carries the full, untruncated summary', async () => {
+  const f = fixture({ config: { reportDelivery: 'prompt' } })
+  await f.tools.get('guild_publish_quest').execute(publishArgs, f.clientExec())
+  const longSummary = `改好了${'报'.repeat(15000)}`
+  const reported = await f.tools.get('guild_report').execute({ summary: longSummary }, f.contractorExec())
+
+  assert.equal(reported.delivery, 'prompt')
+  assert.equal(f.prompts[1].content[0].text.endsWith(longSummary), true)
+  const collected = await f.tools.get('guild_collect').execute({}, f.clientExec())
+  assert.equal(collected.quests[0].summary, longSummary)
 })
 
 test('auto falls back to prompt delivery when the host has no jobs service', async () => {

@@ -47,8 +47,9 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
 ## `guild_publish_quest`
 
 - 输入：`workspace`（必填）、`quest`（必填）、`title`（必填）、`permission`（可选）、
-  `provider` / `model` / `reasoning_effort`（可选，模型选择）。`quest` 是目标与验收标准，
-  不应包含执行计划。`title` 是这次委托的名字：受托会话在侧边栏里用它、`guild_list_quests`
+  `mode`（可选，回报模式，默认 `review`）、`provider` / `model` / `reasoning_effort`
+  （可选，模型选择）。`quest` 是目标与验收标准，不应包含执行计划，也不要写回报指令
+  （见下一条：插件会追加）。`title` 是这次委托的名字：受托会话在侧边栏里用它、`guild_list_quests`
   也用它作为条目名，所以写成短标题（几个词，中文约 12 字以内），不要句子、不要复述需求、
   不带句末标点。旧调用只带 `description` 时仍按标签处理，重启重建也能还原。
 - 标题按 UTF-8 字节预算组装（`titleMaxBytes`，默认 80）：放不下时先截断
@@ -59,10 +60,14 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
 - 允许当前工作区：目标就是调用方所在工作区时，在同一个工作区里新开一个与调用方并列的
   子会话，用来承接长任务、让主会话只留下目标和结果。子会话共用同一份 checkout，插件
   不做文件级冲突检测。
-- 拒绝空委托，以及超过 `maxQuestChars` 的委托。
-- **委托默认写成人在环，不写「自动回报」指令。** 子会话是用户可以打开、随时介入的场景：`quest`
-  默认不要写成「完成直接回报」，受托会话会先给在场用户过目再回报；只有用户明确要求无人值守运行时，
-  才在委托里写「report when done, do not interrupt」这类指令。
+- 只拒绝空委托；文本长度不设上限，由模型自行决定。
+- **回报模式 `mode` 默认 `review`（人在环）。** 插件在投递需求的末尾追加一条回报纪律
+  （文案在 `lib/quest-mode.js`），不依赖委托方模型自己在 `quest` 里写：
+  - `review`：完成或到达需要拍板的点后，先把结果与待确认事项发给受托会话里的用户，
+    确认后再 `guild_report`；不要在完成的同一轮里直接回报。
+  - `unattended`：完成后直接回报。只有用户明确要求无人值守、且任务必须发生在另一个
+    工作区（subagent 去不了）时才选它；不需要人介入的任务应该直接用标准 subagent。
+  `quest` 正文里的旧写法与注入的这条冲突时，以注入的 `mode` 行为准。
 - 权限解析顺序：
   1. 显式 `permission` 参数，并按宿主权限目录校验；
   2. `defaultPermissionPreset`（配置值不存在时退回 `read-only` 或目录第一项）；
@@ -99,10 +104,10 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
   session id 的错误，方便手动清理空会话。
 - 归档委托人会话时，`guild_publish_quest` 导出的 `cascadeArchive` 会级联归档该委托人的受托会话。
 
-投递的提示词包含任务原文（目标/验收标准）和一个结构化的 `guild.quest` 块（委托 id、
-委托人/受托会话 id、工作区、路径、权限、轮次、回报载体，带模型时还有 `selection`）；
-不包含执行计划、方案或步骤。怎么执行由受托会话自己决定；任务完成后由它调用
-`guild_report` 汇报结果。
+投递的提示词包含任务原文（目标/验收标准）、按 `mode` 追加的回报纪律，和一个结构化的
+`guild.quest` 块（委托 id、委托人/受托会话 id、工作区、路径、权限、`mode`、轮次、
+回报载体，带模型时还有 `selection`）；不包含执行计划、方案或步骤。怎么执行由受托会话
+自己决定；什么时候回报由注入的纪律决定，`mode` 也写进记录块，追加轮次和冷重建沿用同一条规则。
 
 ## `guild_list_quests`
 
@@ -113,6 +118,8 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
   `completed`。
 - `round` 是当前轮次（publish 为 1，每次重开加 1）；`model` 是发布时指定的模型
   （`provider/model (effort)`），未指定时没有该字段。
+- `mode` 是回报模式：`review`（人在环）或 `unattended`（无人值守）。旧记录没有该字段，
+  按 `review` 处理。
 - `archived` 和 `running` 只是实时观测。宿主没有 `sessionController.state` 时，
   `running` 恒为 `false`。
 - 投递或权限警告会放在 `note` 里。
@@ -133,6 +140,9 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
   `guild.quest` 块（含 `round` / `jobId`）。登记不了新任务时在投递前失败，记录保持
   `completed`；投递失败则回滚到上一轮的 `completed` 状态并结算失败的新任务。
 - `cancelled` / `failed`：拒绝，提示新开一条委托。
+- 开新一轮时注入的句子按记录的 `mode` 分叉：`review` 写「处理完先给用户确认，确认后再
+  回报」；`unattended` 才写「完成后请再次调用 guild_report 汇报本轮摘要」。投递的
+  `guild.quest` 块也带 `mode`，冷重建后追加仍沿用原模式。
 - 返回 `{ delivered, running, round, jobId? }`。
 
 ## `guild_resume`
@@ -145,6 +155,8 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
   「append 要求先 resume、resume 只认未结轮次、未结轮次只能由 append 打开」的循环依赖。
 - 受托会话已归档且宿主支持时，用 `workspaceRegistry.unarchiveSession` 恢复原会话，
   再投递“继续”消息。绝不会新建会话。
+- 未结委托的唤醒语按记录的 `mode` 分叉：`review` 要求完成或到达拍板点后先给用户确认再
+  回报；`unattended` 才写「完成后调用 guild_report 汇报摘要」。
 - 0.1.5 没有 `unarchiveSession`：适配器原地唤醒受托会话，并在结果里注明它仍在
   归档列表中。
 - 已在执行的受托会话会被跳过，避免重复投递。
@@ -156,11 +168,13 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
 - 输入：`summary`（必填，不能为空）。
 - 只有收到过委托的受托会话可以回报。
 - **一轮一次**：同一轮重复回报会被拒绝。`guild_append` 开的下一轮可以再报一次。
-- **回报前先给在场用户过目（默认）。** 任务包含属于会话内活跃用户的决策或待其确认的结论时，
-  先把摘要贴给用户，经其同意（或用户明确说「直接报」）再调用。回报结算本轮且不可重发（委托方要
-  `guild_append` 才开下一轮）：晚报只多一个往返，早报不可撤销。委托书显式要求不要停顿时以委托书
-  为准；没有活跃用户时本指引不适用、回报行为不变——无人值守、不需要人介入的任务不属于委托场景，
-  请直接用标准 subagent。
+- **回报前先给在场用户过目（默认，`mode: review`）。** 完成工作后不要未经用户同意就
+  回报：先把摘要与待确认事项发在受托会话里，问用户是否发送并等回答（有提问工具就用它，
+  它会等回答，得到肯定回答后同一轮里再回报也可以），确认后再调用。
+  唯一的例外是 `mode: unattended` 的委托——投递消息末尾明确写了「完成即回报，不要停」，
+  以那条为准。回报结算本轮且不可重发（委托方要 `guild_append` 才开下一轮）：晚报只多
+  一个往返，早报不可撤销；用户没回应时本轮保持 `in_progress` 是正常状态，不是失败。
+  委托方模型不需要、也不应该自己在 `quest` 正文里写回报指令。
 - 后台任务投递（`delivery: "job"`）：用摘要结算委托人会话的 `guild-quest` 任务
   （`JobOutcome.result`），并把记录置为 `completed`。`job_output` 会一次性交出该
   结果；正在 `job_output(wait)` 上的等待者会让 Host 跳过完成通知。整个过程不产生
@@ -173,7 +187,7 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
 - 回报文本（仅 `prompt` 模式）是纯文本，刻意避免 Host 的 `dsh-session:` 引用形式：
   裸 id 会让接收 turn 解析失败，而规范化 URI 会让受托会话的 surface 被反复注入
   委托人会话的后续 turn。
-- 摘要会按 `summaryChars` 截断，并写进 `guild.report` 记录块（受托会话自己的工具
+- 摘要不截断（长度由模型决定），并写进 `guild.report` 记录块（受托会话自己的工具
   结果里，含 `round`），作为重启后的补读来源。prompt 投递的请求身份按轮次区分：
   第 1 轮是 `report:<questId>`，第 n 轮是 `report:<questId>:r<n>`。
 
@@ -181,7 +195,8 @@ Session log 只追加、不删除，cache 重建后工具仍然可见。这里�
 
 - 输入：`questId`（可选；省略表示本会话的全部委托）。
 - 不等待、不轮询、不开启 turn：`completed` 的委托返回摘要，`in_progress` 表示
-  本轮回报还没到。结果含 `round`，`jobId` 是当前轮的回报任务。
+  本轮回报还没到；`review` 委托在等用户确认时也是 `in_progress`，这是正常状态，
+  不是失败。结果含 `round`，`jobId` 是当前轮的回报任务。
 - 冷读历史页时按轮次取最新一条 `guild.report`；只有旧轮回报时不会把新轮置为
   `completed`，而是返回说明性 `note`。
 - 摘要来源按顺序：内存 cache（`guild_report` 写入）→ live 受托会话的派生消息 →

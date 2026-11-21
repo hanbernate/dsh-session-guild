@@ -39,9 +39,10 @@
    默认模型，`notes` 里明说）。
 7. 重命名会话。
 8. 登记回报载体：默认在委托方会话名下开一个 `guild-quest` 后台任务（宿主没有
-   `jobs` 服务时退化为消息投递），把 `jobId` / `delivery` / `round` / `selection`
-   写进委托记录和 `guild.quest` 块。
-9. 用全新的、永不中止的信号投递需求。
+   `jobs` 服务时退化为消息投递），把 `jobId` / `delivery` / `round` / `mode` /
+   `selection` 写进委托记录和 `guild.quest` 块。
+9. 用全新的、永不中止的信号投递需求：正文是任务原文 + 按 `mode` 追加的回报纪律
+   （`review` 要求先给用户确认再回报，`unattended` 要求完成即回报）。
 10. 写入 `deliveredAt`；失败则结算任务为 failed、置为 `failed` 并返回 session id。
 
 先保存后投递是刻意的：在第 4 步和第 8 步之间崩溃时，会留下一条可见记录和一个
@@ -49,7 +50,8 @@
 
 ## 回报
 
-受托会话调用 `guild_report(summary)`。默认（`delivery: "job"`）：
+受托会话调用 `guild_report(summary)`。`mode: review`（默认）下，它先在自己的会话里
+把摘要给用户确认，确认后才调用；`unattended` 才是完成即调用。默认（`delivery: "job"`）：
 
 1. 用摘要结算委托方会话的 `guild-quest` 任务：`JobOutcome.result = summary`。
 2. 记录置为 `completed`，写入 `reportedAt` 与 `summary`。
@@ -69,8 +71,8 @@ Host 会跳过 notice，结果由那次工具调用返回。
 
 `reportDelivery: "prompt"` 保留旧行为：摘要作为 queue 模式的用户消息投递到委托人
 会话，请求身份是 `report:<questId>`（第 1 轮）或 `report:<questId>:r<n>`（第 n 轮），
-cache 重建时用它和 `guild.report` 块（含 `round`）按轮次判定 `completed`。摘要按
-`summaryChars` 截断。**一轮只能回报一次**：同一轮重复回报被拒绝；下一轮用
+cache 重建时用它和 `guild.report` 块（含 `round`）按轮次判定 `completed`。摘要不截断，
+长度由模型决定。**一轮只能回报一次**：同一轮重复回报被拒绝；下一轮用
 `guild_append` 打开。
 
 ## 追加指令与轮次
@@ -82,8 +84,9 @@ cache 重建时用它和 `guild.report` 块（含 `round`）按轮次判定 `com
   会话这一轮的回报照旧结算原来那个 `guild-quest` 任务。
 - `completed`：开第 N+1 轮。顺序是**先**登记新的 `guild-quest` 后台任务（owner 仍是
   委托方会话），把记录改回 `in_progress`（带 `round` 与新 `jobId`），**再**投递追加
-  消息；消息里附 `guild.quest` 块（含 `round` / `jobId`）。因此委托方的 `job_output`
-  能在新一轮报告后拿到新摘要。
+  消息；消息里附 `guild.quest` 块（含 `round` / `jobId` / `mode`），注入的回报句按
+  `mode` 分叉（`review` 先确认再回报）。因此委托方的 `job_output` 能在新一轮报告后
+  拿到新摘要。
   - 登记不了新任务时，投递前就失败，记录保持 `completed`（不会留下一个没人能结算的
     开放轮次）。
   - 投递失败时回滚到上一轮的 `completed` 状态（与新任务被结算为 `failed`）；这一轮
@@ -134,7 +137,7 @@ cache 重建时用它和 `guild.report` 块（含 `round`）按轮次判定 `com
 
 - 插件不写任何持久化存储；Session log 是唯一事实来源。
 - client 会话保存 `guild_publish_quest` / `guild_append` 结果里的 `guild.quest` 块
-  （含 `round`、`jobId`、`delivery`，带模型时还有 `selection`），以及旧式 prompt
+  （含 `round`、`jobId`、`delivery`、`mode`，带模型时还有 `selection`），以及旧式 prompt
   投递产生的 `report:<questId>`（或 `:r<n>`）+ `guild.report` 用户消息；contractor
   会话保存每轮投递消息里的 `guild.quest` 块和 `guild_report` 结果里的 `guild.report`
   块（含 `round` 与 `summary`，这是重启后补读的来源）。

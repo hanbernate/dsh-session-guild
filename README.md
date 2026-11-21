@@ -3,10 +3,14 @@
 English | [中文](README.zh-CN.md)
 
 Publish a quest from a DeepSeek Harness session to a fresh ordinary session:
-it works out the detailed plan itself, does the work in its own context, and
-reports a summary back as a background-job result when it is done — so the
-delegating session keeps only the goal and the result. No user message is
-inserted into the client session.
+it works out the detailed plan itself, does the work in its own context, and —
+once the user in that session has confirmed the result — reports a summary back
+as a background-job result, so the delegating session keeps only the goal and
+the result. No user message is inserted into the client session.
+
+> **Status: public beta (0.0.2).** Published on npm under the `beta` tag;
+> install with `dsh-session-guild@beta`. The tool contract may still change
+> between beta releases.
 
 ## Standard subagent vs. a contractor sub-session
 
@@ -22,12 +26,16 @@ to carry all of that context. The Guild inverts that split:
 | Main-session context | large | relatively small |
 
 Like an adventurers' guild: you publish a quest, the plugin opens a normal
-session; the contractor owns the execution plan and decides how to proceed, and
-the result is reported back to the client session.
+session; the contractor owns the execution plan and decides how to proceed,
+shows the result to the user in that session, and reports it back to the client
+session once the user confirms.
 
-For unattended work that needs no human involvement, use a standard subagent
-instead: a quest opens a sub-session the user is meant to step into, so by
-default it does not order an automatic report.
+A quest is human-in-the-loop by default (`mode: "review"`): the plugin appends
+that rule to the delivered requirement, so the contractor does not report in the
+same turn it finishes. For unattended work that needs no human involvement, use
+a standard subagent; use `mode: "unattended"` only when the user explicitly asked
+for an unattended run and the work must happen in another workspace, where a
+subagent cannot go.
 
 ## Two scenarios
 
@@ -46,12 +54,15 @@ stay there, and only the goal and the summary stay here.
 
 ## Requirements
 
-- Requires **DSH ≥ 0.1.5-rc.1**; this package **0.0.2** adds per-quest model selection, follow-up rounds, and byte-budgeted quest titles
+- Requires **DSH ≥ 0.1.5-rc.1**; this package **0.0.2** adds per-quest model selection, follow-up rounds, byte-budgeted quest titles, and the `mode` reporting rule (`review` / `unattended`)
 - No npm dependencies; requires the DSH `permission-presets` plugin (`ctx.permissionPresets`)
 - Reports travel through the DSH background-job plugins (`@deepseek-ai/dsh-jobs` + `@deepseek-ai/dsh-tool-jobs`);
   without them the plugin falls back to message delivery
 - No new commands or UI to learn; the assistant uses the plugin on your behalf
 - Every registered workspace can host a quest by default
+- Quests are `mode: "review"` (human-in-the-loop) by default: the contractor
+  shows the result and waits for your confirmation before reporting;
+  `mode: "unattended"` reports as soon as the work is done
 
 Two sides of one relationship: the **client** session posts the quest; the
 **contractor** sub-session executes it.
@@ -70,7 +81,8 @@ You describe the quest
   │                                        you switch on write access there
   │                                        the contractor does the work
   │
-  ◀──────── summary settles a job ───────── contractor reports when done
+  │                                        the result is shown to you there
+  ◀──────── summary settles a job ───────── you confirm, then it reports
   │
   the quest is marked completed
   you continue with the result
@@ -85,9 +97,12 @@ You describe the quest
 3. The contractor starts **read-only by default**. How it plans and executes is
    its concern; when it needs write access, it asks, and you grant it in that
    session.
-4. When the work is done, the report settles a background job on your session:
-   `job_output` returns the summary, or `guild_collect` reads it later. No user
-   message is inserted, and you keep working in the original session.
+4. When the work is done the contractor shows the result in its own session and
+   waits for your confirmation. Once you confirm, the report settles a
+   background job on your session: `job_output` returns the summary, or
+   `guild_collect` reads it later. No user message is inserted, and you keep
+   working in the original session. Until then the quest stays `in_progress` —
+   that is a normal state, not a failure.
    The quest is complete; you keep working in your original session.
 
 Several quests can be in flight at once. Each workspace has its own files
@@ -129,8 +144,9 @@ same sub-session and collects each round's report.
 ## Quest status is not session status
 
 A quest stays **in progress** until the contractor reports back. The
-contractor being idle, waiting for permission, interrupted, or archived does
-**not** complete it. Only the contractor's report does.
+contractor being idle, waiting for the user's confirmation, waiting for
+permission, interrupted, or archived does **not** complete it. Only the
+contractor's report does.
 
 Nothing resumes automatically after a DSH restart. When you want to continue,
 ask your assistant to resume the open quests; archived contractors are
@@ -147,8 +163,6 @@ Config lives in the profile patch for the plugin row:
   config:
     defaultPermissionPreset: read-only   # default; null inherits the caller permission
     titleMaxBytes: 80                    # byte budget for the contractor session title
-    maxQuestChars: 20000
-    summaryChars: 4000                   # raise to 12000 for long reviews
     requireApproval: false               # true shows a confirmation card
     approveAppend: false                   # true confirms every follow-up
 ```
@@ -157,10 +171,12 @@ Config lives in the profile patch for the plugin row:
 |---|---|---|
 | `defaultPermissionPreset` | `read-only` | Initial permission of the contractor session. `null` inherits the caller's current permission. |
 | `titleMaxBytes` | `80` | UTF-8 byte budget for the contractor session title. The `(from …)` attribution gives way first; the title itself is cut only after it is gone. Keep it equal to or below the deployment's `session-title` `maxTitleBytes`. |
-| `maxQuestChars` | `20000` | Maximum length of the requirement text. |
-| `summaryChars` | `4000` | Maximum length of the summary sent back. Raise it (for example `12000`) when reports are long, such as reviews. |
 | `requireApproval` | `false` | Whether to show a confirmation card before opening the contractor session. |
 | `approveAppend` | `false` | Whether to confirm every follow-up message sent to a contractor. |
+
+Quest text and report summaries have no plugin-side length limit: the model
+decides how long they need to be. The host's own tool-output policy still bounds
+what a single tool result shows to the model.
 
 The permission is written once, when the contractor is created. After that, the
 contractor session's permission is yours to change.
@@ -191,10 +207,10 @@ Read these before relying on the plugin in production.
   in progress an append only steers. After a report, an append reopens the
   quest for round N+1 with a fresh report job, so the contractor can report
   once more; a repeated report for the same round is refused. A cancelled or
-  failed quest cannot be appended — publish a new quest instead. By default
-  the contractor shows an active user the summary before reporting; an
-  explicit quest instruction not to pause wins, and with no active user the
-  guidance does not apply.
+  failed quest cannot be appended — publish a new quest instead. The default
+  `mode: "review"` makes the contractor show the result in its own session and
+  wait for the user's confirmation before reporting; `unattended` is the only
+  mode that reports as soon as the work is done.
 - **Contractors start read-only.** You must grant write access in the
   contractor session, or set `defaultPermissionPreset` to a writable preset.
   The plugin never bypasses the sandbox or approval policy.
@@ -226,8 +242,9 @@ Read these before relying on the plugin in production.
 - **0.1.2-rc.1 itself is unusable for publishing quests.** That release fails to
   mount the `standard` preset when creating a session; this is a host bug, not a
   plugin bug. Use 0.1.5-rc.1 or newer.
-- **Size caps apply.** Requirements are capped by `maxQuestChars`; summaries by
-  `summaryChars`. A summary over the cap is truncated.
+- **No plugin-side length caps.** Quest text and report summaries are as long as
+  the model makes them; the host's own tool-output policy still bounds what a
+  single tool result shows to the model.
 
 See [docs/limitations.md](docs/limitations.md) for the version-by-version
 details.
@@ -247,20 +264,21 @@ the measured [COMPATIBILITY.md](COMPATIBILITY.md) matrix.
 
 ## Installation
 
-Link the `0.0.x` directory into a profile, or add it with Plugin Manager:
+Install the public beta from npm, or link the `0.0.x` directory for development:
 
 ```bash
+dsh plugin --profile <name> add dsh-session-guild@beta
+# or, from a checkout:
 dsh plugin --profile <name> add /path/to/dsh-session-guild/0.0.x
 ```
 
 Enable it for the profile. The workspace registry and session services are
 provided by the Harness; no separate configuration is required.
 
-This checkout is version `0.0.2` and is still **internal testing: it is not
-published to npm**, so link the directory as above instead of installing from a
-registry. Older `0.0.1` installations keep working without the new arguments; a
-client that passes `provider`/`model`, relies on follow-up rounds, or expects
-the byte-budgeted quest title needs `0.0.2` or newer. See the
+`0.0.2` is the first public beta and `0.0.1` was never published. Existing
+installations keep working without the new arguments; a client that passes
+`provider`/`model`, relies on follow-up rounds, uses the `review` reporting
+mode, or expects the byte-budgeted quest title needs `0.0.2` or newer. See the
 [compatibility notes](COMPATIBILITY.md) for the exact version boundary.
 
 ## Development
@@ -277,6 +295,24 @@ The code is split so each tool can be reviewed on its own:
 - `lib/register.js` — tool set, registration lifecycle, adapter mount, event subscriptions
 - `lib/tools/` — one file per tool
 - `lib/compat.js` — host-generation adapters
+- `lib/quest-mode.js` — `review` / `unattended` reporting mode and the texts injected into publish, append, and resume
+
+## Releasing
+
+Pushing a `v*` tag publishes the package through GitHub Actions
+([.github/workflows/publish.yml](.github/workflows/publish.yml)):
+
+1. Bump `version` in `package.json` and commit it.
+2. Create and push the matching tag:
+   `git tag -a v0.0.2 -m "dsh-session-guild 0.0.2" && git push origin v0.0.2`.
+3. CI checks the tag against `package.json`, runs the tests, then publishes.
+
+The npm dist-tag defaults to `beta`, so a tagged beta cannot replace `latest`.
+Set the repository variable `NPM_DIST_TAG=latest` before a stable release.
+Publishing needs an `NPM_TOKEN` repository secret: a granular access token with
+read/write access to this package and 2FA bypass enabled (or an Automation
+token). The workflow also generates npm provenance, so the published version
+links back to this repository and commit.
 
 ## Documentation
 

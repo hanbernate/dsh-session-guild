@@ -16,7 +16,7 @@
  * - The plugin never persists quest state. The Session's derived messages are
  *   the source of truth: the `guild_publish_quest` / `guild_append` results
  *   carry structured `guild.quest` blocks (with `round`, `jobId`, `delivery`,
- *   and `selection` when a model was named), `guild_report` carries a
+ *   `mode`, and `selection` when a model was named), `guild_report` carries a
  *   `guild.report` block with the round and summary, and only a legacy
  *   `prompt`-delivered report is also a `report:<questId>` (or `:r<n>`) user
  *   message. Rebuild folds these blocks in message order.

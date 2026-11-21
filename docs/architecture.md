@@ -16,6 +16,7 @@ lib/models.js                发布时的模型选择：预检、只作用于该
 lib/sessions.js              会话查找与标题
 lib/cache.js                 内存 cache、从派生消息重建
 lib/quest-jobs.js            后台任务桥：登记/结算 guild-quest 任务
+lib/quest-mode.js            回报模式（review / unattended）与三处注入文案
 lib/records.js               结构化记录块（guild.quest / guild.report）
 lib/signals.js               不可取消信号工厂
 lib/register.js              工具集、注册/注销、适配器挂载、事件订阅
@@ -44,15 +45,16 @@ runtime 并调用辅助方法；工具之间不互相 import。
 
 | 文件 | 用途 |
 |---|---|
-| `lib/config.js` | `DEFAULTS` 与 `normalizeConfig`。校验 `titleMaxBytes` / `maxQuestChars` / `summaryChars` 为正整数，非法值回落默认值。 |
+| `lib/config.js` | `DEFAULTS` 与 `normalizeConfig`。校验 `titleMaxBytes` 为正整数，非法值回落默认值；委托文本与回报摘要不设长度上限。 |
 | `lib/paths.js` | `canonical`（realpath，失败时退回词法绝对路径）、`sameDirectory`、`directoryOf`（优先 `workingDirectory.get`，退回会话头 cwd）。 |
 | `lib/workspaces.js` | `list`、`archivedIds`、`descriptors`、`currentDirectory`、`currentWorkspace`、`matchWorkspace`。匹配顺序：id → 标题 → basename → symlink 感知的绝对路径。 |
 | `lib/permissions.js` | 依赖 `ctx.permissionPresets`：`presetCatalog`、`resolvePermission`（显式参数 → 配置默认 → 继承）、`applyPermission`（只写一次）、`confirmQuest`（`requireApproval` 与 `never` 策略）、`defaultPermissionText`（把配置默认权限交给模型看的措辞，工具定义只引用不自己拼）。 |
 | `lib/models.js` | `requestedSelection`（`provider`/`model` 必须成对、`reasoning_effort` 需要两者）、`checkCatalog` / `availability`（`sessionController.modelCatalog()`，没有则 `llm.resolveCallConfig`）、`apply`（优先 `agents.get(sessionId).model.select`，只影响该会话；否则退回 `sessionController.selectModel` 并在 notes 说明部署默认模型被改写；都不可用则投递前失败）、`selectionLabel`。 |
 | `lib/sessions.js` | `liveSession`、`waitForSession`（40 次 × 10ms）、`sessionTitleOf`、`renameSession`、`questSessionTitle`（按 `titleMaxBytes` 组装标题：放不下时先截 `(from 工作区)`，不够就整个去掉，标题本身最后才截）。 |
-| `lib/cache.js` | 纯内存 cache：`add`/`patch`/`replace`/`byClient`/`byContractor`；`ensureClient` / `ensureContractor` 从 `Session.deriveMessages()` 里的结构化 `guild.quest` / `guild.report` 块**按消息顺序折叠轮次**：quest 块置 `in_progress`，report 置同一轮 `completed`，更高轮次重开；同轮不降级，旧轮 report 不结算新轮。`replace` 只用于追加投递失败的回滚。不读事件日志、不做文本正则、不写任何持久化存储。 |
+| `lib/cache.js` | 纯内存 cache：`add`/`patch`/`replace`/`byClient`/`byContractor`；`ensureClient` / `ensureContractor` 从 `Session.deriveMessages()` 里的结构化 `guild.quest` / `guild.report` 块**按消息顺序折叠轮次**：quest 块置 `in_progress` 并带上它的 `mode`，report 置同一轮 `completed`，更高轮次重开；同轮不降级，旧轮 report 不结算新轮。`replace` 只用于追加投递失败的回滚。不读事件日志、不做文本正则、不写任何持久化存储。 |
 | `lib/quest-jobs.js` | 后台任务桥：`start` 以委托方会话为 owner 登记 `guild-quest` 任务并返回 job id（每轮一个，标签在轮次 > 1 时带 `(round n)`）；`deliver` / `fail` 结算 producer 的 deferred，并按 `round` 拒绝结算别的轮次；`cancel` 把委托置为 `cancelled` 并尽力终止受托会话当前 turn。结算句柄（receiver）存放在**应用根上下文**的 symbol 槽里、按 quest id 索引：HMR 热重载换掉插件实例后，新实例仍能结算旧实例登记的任务（host 级 jobs registry 活着、且没有 settle-by-id API，`kill` 只会记 `killed` 并跑 cancel 副作用）。形态与 `JobOutcome.result` 对齐：回报是"值"，由 `job_output` 一次性交出。 |
 | `lib/records.js` | `questRecord` / `reportRecord` / `recordBlock` 生成结构化记录块；`messagesOf` / `machineRecord` / `rpcIdOf` 提供结构化读取，不使用正则。 |
+| `lib/quest-mode.js` | 回报模式 `review`（默认，人在环）/ `unattended`；`questMode` 归一化（缺失或未知一律 `review`）、`isQuestMode` 供参数校验、`reportingDiscipline` / `appendReportSentence` / `resumeReportSentence` 提供投递、追加、唤醒三处注入文案。 |
 | `lib/signals.js` | `commitSignal()`：给投递、回报、观测用的全新、永不中止的 AbortSignal。 |
 
 ### 工具注册与挂载
@@ -66,10 +68,10 @@ runtime 并调用辅助方法；工具之间不互相 import。
 | 文件 | 用途 |
 |---|---|
 | `lib/tools/list-workspaces.js` | `guild_list_workspaces`：列出工作区并标出当前工作区；唯一在 apply 时注册的工具。 |
-| `lib/tools/publish-quest.js` | `guild_publish_quest`：解析目标、权限与模型参数、可选审批、创建会话、写入权限、选模型（投递前预检）、重命名、登记回报任务、写入内存 cache、不可取消地投递需求；`cascadeArchive` 随该工具归档委托人的受托会话。 |
+| `lib/tools/publish-quest.js` | `guild_publish_quest`：解析目标、权限、`mode` 与模型参数、可选审批、创建会话、写入权限、选模型（投递前预检）、重命名、登记回报任务、写入内存 cache、不可取消地投递需求（末尾附按 `mode` 生成的回报纪律）；`cascadeArchive` 随该工具归档委托人的受托会话。 |
 | `lib/tools/list-quests.js` | `guild_list_quests`：按委托先后（消息顺序）列出本会话的记录（输出 `quests`），合并 live 观测；live 受托会话会先补一次 cache 重建，让重启后的 completed 可见。 |
 | `lib/tools/collect.js` | `guild_collect`：不等待地读回报。摘要来源：内存 cache → live 受托会话派生消息 → 冷读 `sessionController.events` 历史页里的 `guild.report` 块。记录 `completed` 但回报任务仍 `running` 时（句柄丢失的僵尸任务）追加一条点名任务与 `job_kill` 清理动作的 `note`。 |
-| `lib/tools/append.js` | `guild_append`：`in_progress` 只 steering；`completed` 先登记新一轮任务、把记录改回 `in_progress`（带 `round` / 新 `jobId`）、再投递带 `guild.quest` 块的追加消息；`cancelled`/`failed` 拒绝；已归档时拒绝并给出可执行路径（`guild_resume` 带 `questIds` 恢复后重试）。 |
+| `lib/tools/append.js` | `guild_append`：`in_progress` 只 steering；`completed` 先登记新一轮任务、把记录改回 `in_progress`（带 `round` / 新 `jobId`）、再投递带 `guild.quest` 块的追加消息（注入句按 `mode` 分叉）；`cancelled`/`failed` 拒绝；已归档时拒绝并给出可执行路径（`guild_resume` 带 `questIds` 恢复后重试）。 |
 | `lib/tools/resume.js` | `guild_resume`：省略 `questIds` 时只恢复 `in_progress` 记录（与旧版一致）；显式点名 `questIds` 时也接受 `completed` 记录——归档受托会话先 unarchive，再唤醒（`completed` 的唤醒消息注明等待下一轮追加、不要主动回报），只追加 `resumedAt`/`resumeCount` 元数据，不改状态、不开轮次、不登记回报任务；运行中的跳过。 |
 | `lib/tools/report.js` | `guild_report`：受托会话回报**本轮**摘要（同一轮只能一次）；`job` 投递结算当前轮的后台任务（不产生用户消息），找不到结算句柄时只记录并带 `note`（用记录里的 `jobId` 向 jobs registry 读一次状态，区分「仍 running、句柄丢失」与「已不存在/已终止」），`prompt` 投递保持旧的消息路径并按轮次使用不同的请求身份。 |
 
@@ -117,10 +119,10 @@ apply(ctx, config)
 
 | 事实 | 来源 |
 |---|---|
-| 委托元数据 | client 会话中 `guild_publish_quest` / `guild_append` 结果的第二个文本块（`{"kind":"guild.quest",…}`）：quest id、受托会话、工作区、路径、权限、`round`、`jobId`/`delivery`、`selection`；`quest` / `label` 来自同一消息里 assistant 的 tool-call 参数（`label` 取 `title`，旧调用取 `description`，都没有时取 `quest` 首行前 40 字符） |
+| 委托元数据 | client 会话中 `guild_publish_quest` / `guild_append` 结果的第二个文本块（`{"kind":"guild.quest",…}`）：quest id、受托会话、工作区、路径、权限、`mode`、`round`、`jobId`/`delivery`、`selection`；`quest` / `label` 来自同一消息里 assistant 的 tool-call 参数（`label` 取 `title`，旧调用取 `description`，都没有时取 `quest` 首行前 40 字符） |
 | 轮次 | `guild.quest` 块的 `round`（publish 为 1，append 重开时递增）；`guild.report` 块带同一 `round`，重建时按消息顺序折叠 |
 | 完成 | 进程内 `guild_report` 直接 patch cache；重启后由受托会话工具结果里的 `guild.report` 块（含 `summary`）重建，或由冷读历史页恢复。`prompt` 投递的旧委托仍以 client 会话中的 `report:<questId>` 用户消息为证据 |
-| 汇报载体 | 当前轮 `guild.quest` 块里的 `jobId` / `delivery`；`guild-quest` 后台任务归属于 client 会话（每轮一个），其释放/重启会取消任务（回报随后走 `guild_collect` 补读） |
+| 汇报载体 | 当前轮 `guild.quest` 块里的 `jobId` / `delivery` / `mode`；`guild-quest` 后台任务归属于 client 会话（每轮一个），其释放/重启会取消任务（回报随后走 `guild_collect` 补读） |
 | 受托侧身份 | contractor 会话中投递消息里的 `guild.quest` 块 |
 | cache | 纯内存；插件启动时为空，第一次访问某个 Session 时从它的 `deriveMessages()` 重建 |
 

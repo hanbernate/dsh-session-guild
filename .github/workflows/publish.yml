@@ -34,6 +34,19 @@ jobs:
           fi
           echo "publishing $version"
 
+      # Fail with a clear message if the secret never reached the job. GitHub
+      # secret names are case-insensitive, but the fallback also covers a name
+      # entered in lower case.
+      - name: Check the npm token
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.npm_token }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::No npm token reached this job. Add NPM_TOKEN under Settings -> Secrets and variables -> Actions -> Repository secrets."
+            exit 1
+          fi
+          echo "npm token is visible to the workflow"
+
       - name: Check and test
         run: |
           npm run check
@@ -45,5 +58,5 @@ jobs:
       - name: Publish to npm
         run: npm publish --tag "${NPM_DIST_TAG:-beta}" --provenance
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.npm_token }}
           NPM_DIST_TAG: ${{ vars.NPM_DIST_TAG }}

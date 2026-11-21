@@ -56,7 +56,7 @@ jobs:
       # `latest` while the package is a public beta. For a stable release set
       # the repository variable NPM_DIST_TAG=latest (Settings -> Variables).
       - name: Publish to npm
-        run: npm publish --tag "${NPM_DIST_TAG:-beta}" --provenance
+        run: npm publish --tag "${NPM_DIST_TAG:-beta}" --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.npm_token }}
           NPM_DIST_TAG: ${{ vars.NPM_DIST_TAG }}
